@@ -50,9 +50,19 @@ BRIDGET_REPO = Path(os.environ.get(
 ))
 
 CREDIT_BALANCE_RE = re.compile(
-    r'credit_balance_too_low|credit balance is too low|Your credit balance',
+    r'credit_balance_too_low'
+    r'|credit balance is too low'
+    r'|credit balance'
+    r'|Plans & Billing'
+    r'|insufficient.{0,20}credit',
     re.IGNORECASE,
 )
+
+ANSI_RE = re.compile(r'\x1b\[[\d;]*[a-zA-Z]')
+
+
+def strip_ansi(s: str) -> str:
+    return ANSI_RE.sub('', s)
 
 POLL_INTERVAL = 5  # seconds
 DISCORD_MSG_LIMIT = 1900  # leave headroom under the 2000 char limit
@@ -882,7 +892,7 @@ def handle_command(text: str) -> str:
                 diag = json.loads(dout)
             except json.JSONDecodeError:
                 continue
-            tail = diag.get('recent_output_tail') or ''
+            tail = strip_ansi(diag.get('recent_output_tail') or '')
             if not CREDIT_BALANCE_RE.search(tail):
                 continue
             last_activity = diag.get('last_activity') or ''
