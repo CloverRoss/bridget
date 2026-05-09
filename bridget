@@ -917,9 +917,24 @@ def handle_command(text: str) -> str:
         agent_name = parts[1]
         reason = parts[2] if len(parts) > 2 else 'status check'
         rc, out, err = run_pogo(['nudge', agent_name, reason])
-        if rc == 0:
-            return f'✓ nudged {agent_name}: "{reason}"'
-        return f'✗ nudge failed: {err or out}'
+        if rc != 0:
+            return f'✗ nudge failed: {err or out}'
+        success = f'✓ nudged {agent_name}: "{reason}"'
+        rc2, dout, _ = run_pogo(['agent', 'diagnose', agent_name, '--json'])
+        if rc2 != 0:
+            return success
+        try:
+            diag = json.loads(dout)
+        except json.JSONDecodeError:
+            return success
+        tail = strip_ansi(diag.get('recent_output_tail') or '')
+        if CREDIT_BALANCE_RE.search(tail):
+            return (
+                f'⚠️ nudged {agent_name} — but credit balance error in '
+                f'recent tail; nudge will likely be ignored. '
+                f'Refuel at console.anthropic.com.'
+            )
+        return success
 
     if low == 'restart':
         rc, out, err = run_shell(
