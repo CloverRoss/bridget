@@ -76,10 +76,8 @@ COMMAND_LIST = (
     "• `explain mg-XXXX <what>` — ask architect to elaborate without redesigning\n"
     "• `next mg-XXXX` — file the next Roadmap task from this design as a new idea\n"
     "• `read mg-XXXX` — print the latest mail referencing this id\n"
-    "• `idea: <text>` — file a new idea\n"
-    "• `idea: [tag] <text>` — file with extra scope tag (e.g. `[bridget]`)\n"
-    "• `bug: <text>` — file a new bug (existing software is broken, not a new feature)\n"
-    "• `bug: [tag] <text>` — file a bug with extra scope tag (e.g. `[discord-bridge]`)\n"
+    "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
+    "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` (when supported by architect) for crash-class bugs that should skip architect's design phase. (existing software is broken — not a new feature.)\n"
     "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
     "• `dismiss mg-XXXX` — mark all unread mail about an mg-id as read\n"
     "• `dismiss all` — inbox-zero everything\n"
@@ -1009,14 +1007,16 @@ def handle_command(text: str) -> str:
     if low.startswith('idea:'):
         body = text[5:].strip()
         if not body:
-            return "Usage: `idea: [optional-tag] <description>`"
+            return "Usage: `idea: [optional-tag] [optional-tag] ... <description>`"
         extra_tags = []
-        m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
-        if m:
+        while True:
+            m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
+            if not m:
+                break
             extra_tags.append(m.group(1).strip())
             body = m.group(2).strip()
         if not body:
-            return "Usage: `idea: [optional-tag] <description>`"
+            return "Usage: `idea: [optional-tag] [optional-tag] ... <description>`"
         title = body.splitlines()[0][:60]
         args = [
             'new', '--type=idea',
@@ -1034,14 +1034,16 @@ def handle_command(text: str) -> str:
     if low.startswith('bug:'):
         body = text[4:].strip()
         if not body:
-            return "Usage: `bug: [optional-tag] <description>`"
+            return "Usage: `bug: [optional-tag] [optional-tag] ... <description>`"
         extra_tags = []
-        m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
-        if m:
+        while True:
+            m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
+            if not m:
+                break
             extra_tags.append(m.group(1).strip())
             body = m.group(2).strip()
         if not body:
-            return "Usage: `bug: [optional-tag] <description>`"
+            return "Usage: `bug: [optional-tag] [optional-tag] ... <description>`"
         title = body.splitlines()[0][:60]
         args = [
             'new', '--type=bug',
