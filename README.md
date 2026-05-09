@@ -27,13 +27,27 @@ nohup, or whatever supervisor you like.
 
 ## Roadmap & known bugs
 
-The full v2 roadmap and known-bugs list, mirrored from [ROADMAP.md](ROADMAP.md) and [KNOWN_BUGS.md](KNOWN_BUGS.md). Both files are the canonical source — update them (and this README section) in the same PR if you change roadmap or bug state. See [CONTRIBUTING.md](CONTRIBUTING.md).
+Current planned work and known bugs are mirrored below from [ROADMAP.md](ROADMAP.md) and [KNOWN_BUGS.md](KNOWN_BUGS.md). Both files are the canonical source — update them (and this README section) in the same PR if you change roadmap or bug state. See [CONTRIBUTING.md](CONTRIBUTING.md).
 
-### v2 Roadmap
+### Roadmap
 
-Current planned work for bridget v2. Completed items are removed in the same PR that closes them, so this file always reflects what's still ahead.
+v2 is complete. v3 is in progress.
 
-_v2 is complete — no items remain. Future work tracked in the maintainer's v3 roadmap (private)._
+#### v3 P1 — Behavioral / nice-to-have
+
+##### Mayor consumes bridget's mail-action log
+Mayor's prompt should be edited to tail `~/.pogo/bridget.mail-actions.log` (written by bridge on every `read` / `dismiss` / `dismiss-all`) so its view of mail state stays in sync with the user's Discord actions across mayor outages. Scan-window mitigation: bound the first pass to unreads + mail from the last 48h, so memory and parsing cost stay flat as the log grows.
+
+##### Quiet hours: actually gate behavior, push to agents
+The bridge's `quiet` command currently writes `~/.pogo/quiet.json` but no agent reads it. Make quiet hours observably affect agent behavior, and use the same window for staged restarts: bridge holds the canonical truth and pushes to agents; bridge re-pushes on agent reconnect; mayor suppresses non-critical human-bound mail during the window; prompt-update restarts get scheduled inside the window. Push mechanism (snapshot file, structured mail, events.log tail) is the hardest design piece.
+
+#### v3 P2 — Hardening / polish
+
+##### CI check that PR template was respected
+GH Actions workflow that diffs commit-modified roadmap/bug-list files against README mentions and warns if out of sync. Deferred until manual discipline has been observed across enough PRs to know whether drift is a real failure mode.
+
+##### Auto-wire fresh-install smoke test into `test.sh`
+`tests/smoke-fresh-install.sh` currently runs only when invoked explicitly. Auto-wire into `test.sh` (or add a `test.sh --full` flag) without breaking the current no-venv-required ergonomics. Deferred until manual discipline has been tested across a few PRs.
 
 ### Known bugs
 
