@@ -41,6 +41,7 @@ SEEN_FILE = HOME / '.pogo' / 'bridget.seen'
 QUIET_FILE = HOME / '.pogo' / 'quiet.json'
 TASK_STATES_FILE = HOME / '.pogo' / 'bridget.task-states.json'
 IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
+MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 AGENT_STATUS_DIR = HOME / '.pogo' / 'agent-status'
 AGENT_STATUS_STALE = datetime.timedelta(minutes=30)
 INSTALL_DOCS_URL = 'https://github.com/CloverRoss/bridget#readme'
@@ -310,6 +311,28 @@ def save_idea_claims(ids: set) -> None:
     payload = {'claimed_ids': sorted(ids)}
     tmp.write_text(json.dumps(payload, indent=2) + '\n')
     os.replace(tmp, IDEA_CLAIMS_FILE)
+
+
+def log_mail_action(action: str, mg_id: str | None = None) -> None:
+    """Append a JSON line to ~/.pogo/bridget.mail-actions.log.
+
+    Schema: {"ts":"<ISO8601 UTC>","action":"<action>","mg_id":"<id>","by":"human"}.
+    Failures are logged to stderr but do not raise — mail-state changes
+    must still succeed even if the log can't be written."""
+    try:
+        MAIL_ACTIONS_LOG.parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            'ts': datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'action': action,
+            'by': 'human',
+        }
+        if mg_id is not None:
+            entry['mg_id'] = mg_id
+        with MAIL_ACTIONS_LOG.open('a') as f:
+            f.write(json.dumps(entry) + '\n')
+            f.flush()
+    except Exception as e:
+        print(f'mail-action log append failed: {e}', file=sys.stderr)
 
 
 _TRANSITION_FORMATS = {
@@ -779,6 +802,7 @@ def handle_command(text: str) -> str:
             cur_dir.mkdir(parents=True, exist_ok=True)
             try:
                 p.rename(cur_dir / p.name)
+                log_mail_action('read', mg_id=mg_id)
             except Exception as e:
                 print(f'auto-mark-read failed for {p.name}: {e}', file=sys.stderr)
         return out
@@ -790,9 +814,11 @@ def handle_command(text: str) -> str:
         target = parts[1].strip()
         if target.lower() == 'all':
             n = mark_mail_read(all_unread=True)
+            log_mail_action('dismiss-all')
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read (inbox-zero)"
         if target.lower().startswith('mg-'):
             n = mark_mail_read(mg_id=target)
+            log_mail_action('dismiss', mg_id=target)
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{target}`"
         return "Usage: `dismiss mg-XXXX` or `dismiss all`"
 
