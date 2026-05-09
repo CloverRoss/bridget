@@ -175,6 +175,18 @@ appearing in `mg list --status=claimed` after that point produce a DM. Only
 items with `type=idea` trigger notifications; tasks and other types are
 filtered out.
 
+## Mail action log
+
+bridget appends a JSON line to `~/.pogo/bridget.mail-actions.log` every
+time a Discord command changes mail state — `read mg-XXXX`, `dismiss
+mg-XXXX`, or `dismiss all`. Each line carries an ISO8601 UTC timestamp,
+the action, the mg-id (when scoped), and `by: human`.
+
+The log is bridge-private runtime cache (not committed). Crew agents can
+consume it on resume to reconstruct mail-state changes that happened
+during an outage. If the file gets too large, delete it — bridget
+re-creates it on the next mail-state change.
+
 ## Remote restart
 
 The `restart` Discord command upgrades a running bridget to the latest
