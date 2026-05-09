@@ -33,23 +33,13 @@ The full v2 roadmap and known-bugs list, mirrored from [ROADMAP.md](ROADMAP.md) 
 
 Current planned work for bridget v2. Completed items are removed in the same PR that closes them, so this file always reflects what's still ahead.
 
-#### P2 — Hardening / polish (file when v1 parity is in)
-
-##### 7. Document `POGO_INBOX_REPO` / `POGO_DESIGNS_DIR` in install flow
-- README/install.sh should call out these env vars explicitly so users don't hit the silent-404 trap before P1 ships. Currently the `bridget.env.example` mentions them but install.sh doesn't actively prompt or warn.
-- **Filing:** `idea: install.sh should warn or prompt when POGO_INBOX_REPO/POGO_DESIGNS_DIR are unset (until v2 sensible-defaults ships)`
+_v2 is complete — no items remain. Future work tracked in the maintainer's v3 roadmap (private)._
 
 ### Known bugs
 
-Open bugs against `bridget` that are deferred to v2 design. Maintained alongside mg state (the maintainer's local work tracker); update this file in the same PR that adds, dispatches, or closes a bug.
+Open bugs against `bridget`. Maintained alongside mg state (the maintainer's local work tracker); update this file in the same PR that adds, dispatches, or closes a bug.
 
-#### Open (deferred to v2 design)
-
-| mg-id | Summary |
-|---|---|
-| mg-d531 | mail-read state desync after credit outage — bridge keeps moving mails to `cur/` while mayor is stalled |
-| mg-db58 | `balance` command false-negative on credit errors — returns ✅ when credit-exhaustion text is present in agent output |
-| mg-ddb5 | `nudge` falsely reports agents active when credits exhausted — returns ✓ on PTY delivery without checking diagnose state |
+_No open bugs._
 
 ## Quick start
 
