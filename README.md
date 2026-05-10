@@ -98,19 +98,40 @@ All config lives in `~/.pogo/bridget.env`. See
 Process environment variables override values in the env file, so a
 launchd/systemd unit can inject overrides without editing the file.
 
+### Reply routing (architect vs. director)
+
+`approve`, `reject`, `revise`, and `explain` deliver the reply mail to the
+mailbox that owns the work item. Routing is decided by the item's `Type:`
+field (read from `mg show`):
+
+- `type=report` → reply goes to **director** (director files its own
+  approve-cycle items with this type).
+- Anything else (`idea`, `bug`, `task`, …) → reply goes to **architect**
+  (today's default; preserves existing behavior).
+
+`mg show` failures or items with no `Type:` line fall back to architect,
+so a missing item never silently drops a reply. The decision is
+case-sensitive and exact-match — only the literal string `report` routes
+to director.
+
+Both id prefixes are accepted across all id-bearing commands: `mg-XXXX`
+(today's prefix) and `dr-XXXX` (director's prefix once macguffin ships
+per-project prefixes; bridget supports it now so the eventual flip is
+director-side configuration only).
+
 ## Commands (DM the bot)
 
-- `approve mg-XXXX` — approve a design (auto-clears related mails).
-- `reject mg-XXXX <reason>` — shelve idea + clear mails.
-- `revise mg-XXXX <feedback>` — request changes (auto-unshelves; clears mails).
-- `explain mg-XXXX <what>` — ask architect to elaborate without redesigning.
-- `read mg-XXXX` — print the latest mail referencing this id.
+- `approve mg-XXXX` (or `dr-XXXX`) — approve a design (auto-clears related mails).
+- `reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails.
+- `revise mg-XXXX <feedback>` (or `dr-XXXX`) — request changes (auto-unshelves; clears mails).
+- `explain mg-XXXX <what>` (or `dr-XXXX`) — ask architect to elaborate without redesigning.
+- `read mg-XXXX` (or `dr-XXXX`) — print the latest mail referencing this id.
 - `idea: <text>` — file a new idea. *(Requires `POGO_INBOX_REPO`.)*
 - `idea: [tag] <text>` — file with an extra scope tag (e.g. `[bridget]`).
 - `bug: <text>` — file a new bug (existing software is broken, not a new feature). *(Requires `POGO_INBOX_REPO`.)*
 - `bug: [tag] <text>` — file a bug with an extra scope tag (e.g. `[discord-bridge]`).
 - `mail <subject>\n<body>` — send a mail to the configured recipient (default `mayor`; override via `POGO_MAIL_RECIPIENT`). Without a newline, the whole text becomes the subject.
-- `dismiss mg-XXXX` — mark all unread mail about an mg-id as read.
+- `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read.
 - `dismiss all` — inbox-zero everything.
 - `status` — global pull view (unread mail + in-flight work).
 - `agents` — list crew agents with a 4-state busy/idle indicator. Each row leads with a colored-circle emoji and state word: 🟢 **idle** (running, healthy, fresh heartbeat, agent self-reports idle), 🟡 **busy** (running and either self-reports busy, has a claimed mg item, or hasn't yet adopted the self-report — *idle is asserted only via explicit self-report; absence of info defaults to busy*), 🔴 **stalled** (running but daemon unhealthy or status JSON > 30 min stale), or ⚪ **offline** (process not running). Busy rows append the self-reported label or claimed mg-id as a trailing badge when one is available. Agents opt into the idle/busy distinction by writing an optional `state` field (`"idle"`, `"busy"`, or `"busy: <short label>"`) to `~/.pogo/agent-status/<name>.json`. Non-crew agents (e.g. polecats) are ephemeral per-task processes with no heartbeat; they always render as 🟡 **busy** while running, badged with their claimed mg-id when available.

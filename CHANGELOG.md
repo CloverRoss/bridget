@@ -17,6 +17,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Architect + mayor consume the file in follow-ups (mg-1343 prompt-edit
   batch); until those land, flipping the toggle is settable + readable but
   no agent acts on it yet. (mg-8b70)
+- `approve`, `reject`, `revise`, and `explain` now route to director's
+  mailbox when the work item has `type=report`; everything else continues
+  to route to architect (today's default). Both `mg-XXXX` and `dr-XXXX`
+  id forms are accepted across all id-bearing commands (`approve`,
+  `reject`, `revise`, `explain`, `read`, `dismiss`). (mg-bf12)
 
 ## [3.2.0] - 2026-05-10
 

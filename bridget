@@ -69,15 +69,15 @@ DISCORD_MSG_LIMIT = 1900  # leave headroom under the 2000 char limit
 STATUS_OUTPUT_BUDGET = 1700
 
 COMMAND_LIST = (
-    "• `approve mg-XXXX` — approve a design (auto-clears related mails)\n"
-    "• `reject mg-XXXX <reason>` — shelve idea + clear mails\n"
-    "• `revise mg-XXXX <feedback>` — request changes (auto-unshelves; clears mails)\n"
-    "• `explain mg-XXXX <what>` — ask architect to elaborate without redesigning\n"
-    "• `read mg-XXXX` — print the latest mail referencing this id\n"
+    "• `approve mg-XXXX` (or `dr-XXXX`) — approve a design (auto-clears related mails)\n"
+    "• `reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails\n"
+    "• `revise mg-XXXX <feedback>` (or `dr-XXXX`) — request changes (auto-unshelves; clears mails)\n"
+    "• `explain mg-XXXX <what>` (or `dr-XXXX`) — ask architect to elaborate without redesigning\n"
+    "• `read mg-XXXX` (or `dr-XXXX`) — print the latest mail referencing this id\n"
     "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
     "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` (when supported by architect) for crash-class bugs that should skip architect's design phase. (existing software is broken — not a new feature.)\n"
     "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
-    "• `dismiss mg-XXXX` — mark all unread mail about an mg-id as read\n"
+    "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read\n"
     "• `dismiss all` — inbox-zero everything\n"
     "• `status` — global pull view (unread mail + in-flight work)\n"
     "• `agents` — list crew agents and health\n"
@@ -703,6 +703,27 @@ def run_mg(args: list[str]) -> tuple[int, str, str]:
         return 127, '', f'mg not found at {MG_BIN}'
 
 
+def route_recipient(mg_id: str) -> str:
+    """Mailbox for a human reply to mg_id. type=report → director; else architect."""
+    rc, out, err = run_mg(['show', mg_id])
+    if rc != 0:
+        print(
+            f'route_recipient: mg show {mg_id} failed (rc={rc}); '
+            f'falling back to architect. err={err.strip()[:200]}',
+            file=sys.stderr,
+        )
+        return 'architect'
+    m = re.search(r'^Type:\s+(\S+)', out, re.MULTILINE)
+    if not m:
+        print(
+            f'route_recipient: no Type: line in mg show {mg_id}; '
+            f'falling back to architect.',
+            file=sys.stderr,
+        )
+        return 'architect'
+    return 'director' if m.group(1).strip() == 'report' else 'architect'
+
+
 def run_pogo(args: list[str]) -> tuple[int, str, str]:
     pogo_bin = CONFIG.get('pogo_bin') or shutil.which('pogo')
     if not pogo_bin:
@@ -851,11 +872,12 @@ def handle_command(text: str) -> str:
     text = text.strip()
     low = text.lower()
 
-    if low.startswith('approve mg-'):
+    if low.startswith('approve mg-') or low.startswith('approve dr-'):
         parts = text.split(None, 1)
         mg_id = parts[1] if len(parts) > 1 else ''
+        target = route_recipient(mg_id)
         rc, out, err = run_mg([
-            'mail', 'send', 'architect',
+            'mail', 'send', target,
             '--from=human',
             f'--subject=approve {mg_id}',
             '--body=approved via discord',
@@ -866,14 +888,15 @@ def handle_command(text: str) -> str:
             return f"✓ approve sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
 
-    if low.startswith('reject mg-'):
+    if low.startswith('reject mg-') or low.startswith('reject dr-'):
         parts = text.split(None, 2)
         if len(parts) < 2:
-            return "Usage: `reject mg-XXXX <reason>`"
+            return "Usage: `reject mg-XXXX <reason>` (or `dr-XXXX`)"
         mg_id = parts[1]
         reason = parts[2] if len(parts) > 2 else 'rejected via discord'
+        target = route_recipient(mg_id)
         rc, out, err = run_mg([
-            'mail', 'send', 'architect',
+            'mail', 'send', target,
             '--from=human',
             f'--subject=reject {mg_id}',
             f'--body={reason}',
@@ -884,17 +907,18 @@ def handle_command(text: str) -> str:
             return f"✓ reject sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
 
-    if low.startswith('revise mg-'):
+    if low.startswith('revise mg-') or low.startswith('revise dr-'):
         parts = text.split(None, 2)
         if len(parts) < 3:
-            return "Usage: `revise mg-XXXX <feedback>`"
+            return "Usage: `revise mg-XXXX <feedback>` (or `dr-XXXX`)"
         mg_id = parts[1]
         feedback = parts[2]
         sh_rc, sh_out, _ = run_mg(['show', mg_id])
         if sh_rc == 0 and re.search(r'^Status:\s+shelved', sh_out, re.MULTILINE):
             run_mg(['unshelve', mg_id])
+        target = route_recipient(mg_id)
         rc, out, err = run_mg([
-            'mail', 'send', 'architect',
+            'mail', 'send', target,
             '--from=human',
             f'--subject=revise {mg_id}',
             f'--body={feedback}',
@@ -905,10 +929,10 @@ def handle_command(text: str) -> str:
             return f"✓ revise sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
 
-    if low.startswith('read mg-'):
+    if low.startswith('read mg-') or low.startswith('read dr-'):
         parts = text.split(None, 1)
         if len(parts) < 2:
-            return "Usage: `read mg-XXXX`"
+            return "Usage: `read mg-XXXX` (or `dr-XXXX`)"
         mg_id = parts[1].strip()
         matches = find_mails_for(mg_id)
         if not matches:
@@ -936,26 +960,27 @@ def handle_command(text: str) -> str:
     if low.startswith('dismiss '):
         parts = text.split(None, 1)
         if len(parts) < 2:
-            return "Usage: `dismiss mg-XXXX` or `dismiss all`"
-        target = parts[1].strip()
-        if target.lower() == 'all':
+            return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"
+        arg = parts[1].strip()
+        if arg.lower() == 'all':
             n = mark_mail_read(all_unread=True)
             log_mail_action('dismiss-all')
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read (inbox-zero)"
-        if target.lower().startswith('mg-'):
-            n = mark_mail_read(mg_id=target)
-            log_mail_action('dismiss', mg_id=target)
-            return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{target}`"
-        return "Usage: `dismiss mg-XXXX` or `dismiss all`"
+        if arg.lower().startswith('mg-') or arg.lower().startswith('dr-'):
+            n = mark_mail_read(mg_id=arg)
+            log_mail_action('dismiss', mg_id=arg)
+            return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{arg}`"
+        return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"
 
-    if low.startswith('explain mg-'):
+    if low.startswith('explain mg-') or low.startswith('explain dr-'):
         parts = text.split(None, 2)
         if len(parts) < 3:
-            return "Usage: `explain mg-XXXX <what to explain>`"
+            return "Usage: `explain mg-XXXX <what to explain>` (or `dr-XXXX`)"
         mg_id = parts[1]
         topic = parts[2]
+        target = route_recipient(mg_id)
         rc, out, err = run_mg([
-            'mail', 'send', 'architect',
+            'mail', 'send', target,
             '--from=human',
             f'--subject=explain {mg_id}',
             f'--body={topic}',
