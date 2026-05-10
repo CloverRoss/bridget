@@ -9,7 +9,7 @@ nohup, or whatever supervisor you like.
 
 ## Prerequisites
 
-- **pogo** installed, with `mg` on your `PATH`. (If `mg` is in a non-standard
+- **[pogo](https://github.com/drellem2/pogo)** installed, with `mg` on your `PATH`. (If `mg` is in a non-standard
   location, set `MG_BIN` in the env file — see below.)
 - A canonical pogo mail layout at `~/.macguffin/mail/human/{new,cur}/`, or set
   `POGO_MAIL_DIR` to the parent of `new/` and `cur/`.

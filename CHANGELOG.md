@@ -13,6 +13,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   cascade rule, making manual advancement obsolete. (mg-38d2)
 - `POGO_DESIGNS_DIR` env var (only the `next` command read it). (mg-38d2)
 
+### Documentation
+
+- Link pogo repo in README Prerequisites section. (mg-9447)
+
 ## [3.1.1] - 2026-05-10
 
 ### Fixed
