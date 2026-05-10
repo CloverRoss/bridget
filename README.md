@@ -31,15 +31,7 @@ Current planned work and known bugs are mirrored below from [ROADMAP.md](ROADMAP
 
 ### Roadmap
 
-v2 is complete. v3 is in progress.
-
-#### v3 P1 — Behavioral / nice-to-have
-
-##### Mayor consumes bridget's mail-action log
-Mayor's prompt should be edited to tail `~/.pogo/bridget.mail-actions.log` (written by bridge on every `read` / `dismiss` / `dismiss-all`) so its view of mail state stays in sync with the user's Discord actions across mayor outages. Scan-window mitigation: bound the first pass to unreads + mail from the last 48h, so memory and parsing cost stay flat as the log grows.
-
-##### Quiet hours: actually gate behavior, push to agents
-The bridge's `quiet` command currently writes `~/.pogo/quiet.json` but no agent reads it. Make quiet hours observably affect agent behavior, and use the same window for staged restarts: bridge holds the canonical truth and pushes to agents; bridge re-pushes on agent reconnect; mayor suppresses non-critical human-bound mail during the window; prompt-update restarts get scheduled inside the window. Push mechanism (snapshot file, structured mail, events.log tail) is the hardest design piece.
+v2 is complete. v3 P1 is shipped (mayor mail-action log consumer + quiet hours gating both landed via mayor.md prompt edits, mg-3ae5 and mg-34ae). v3 P2 below is deferred.
 
 #### v3 P2 — Hardening / polish
 
