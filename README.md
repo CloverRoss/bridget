@@ -31,7 +31,7 @@ Current planned work and known bugs are mirrored below from [ROADMAP.md](ROADMAP
 
 ### Roadmap
 
-v2 is complete. v3 P1 is shipped (mayor mail-action log consumer + quiet hours gating both landed via mayor.md prompt edits, mg-3ae5 and mg-34ae). No active v3 work remains.
+No active work in flight; everything below is backlog awaiting its trigger.
 
 #### Backlogged items
 
