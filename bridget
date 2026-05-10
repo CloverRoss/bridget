@@ -383,6 +383,100 @@ def _parse_iso_utc(ts: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(ts).astimezone(datetime.timezone.utc)
 
 
+def _safe_load_status_json(name: str) -> dict | None:
+    """Read ~/.pogo/agent-status/<name>.json. Returns None if the file is
+    missing, malformed, or its updated_at is older than AGENT_STATUS_STALE.
+    Otherwise returns the parsed dict."""
+    path = AGENT_STATUS_DIR / f'{name}.json'
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return None
+    except Exception:
+        return None
+    updated_at = data.get('updated_at')
+    if not updated_at:
+        return None
+    try:
+        updated = _parse_iso_utc(updated_at)
+    except Exception:
+        return None
+    if datetime.datetime.now(datetime.timezone.utc) - updated > AGENT_STATUS_STALE:
+        return None
+    return data
+
+
+def fetch_mg_claims_by_assignee() -> dict[str, list[str]]:
+    """Return {assignee_name: [mg_id, ...]} for items currently in 'claimed'
+    status. One shellout per agents-command invocation. Errors return {}
+    silently — the renderer degrades to 'no badge', not 'no row'."""
+    rc, out, _ = run_mg(['list', '--status=claimed', '--json'])
+    if rc != 0:
+        return {}
+    by_assignee: dict[str, list[str]] = {}
+    for line in out.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        assignee = item.get('assignee')
+        iid = item.get('id')
+        if not assignee or not iid:
+            continue
+        by_assignee.setdefault(assignee, []).append(iid)
+    return by_assignee
+
+
+def agent_state(name: str, agent_list_entry: dict, diag: dict,
+                status_json: dict | None,
+                mg_claims: dict[str, list[str]]) -> tuple[str, str, str | None]:
+    """Return (emoji, label, badge) for one crew agent row.
+
+    emoji  ∈ {'🟢', '🟡', '🔴', '⚪'}
+    label  ∈ {'idle', 'busy', 'stalled', 'offline'}
+    badge  optional trailing string (mg-id or self-report label) or None.
+
+    Decision tree (priority order):
+        process != 'running'                       -> ('⚪', 'offline', None)
+        status_json is None [process running]      -> ('🔴', 'stalled', 'stale heartbeat')
+        diag.health != 'healthy'                   -> ('🔴', 'stalled', 'unhealthy')
+        state == 'idle'                            -> ('🟢', 'idle', None)
+        state startswith 'busy'                    -> ('🟡', 'busy', <self-report label> or None)
+        no state field, name in mg_claims          -> ('🟡', 'busy', '<mg-id>')
+        no state field, no claim                   -> ('🟡', 'busy', None)
+
+    The optional 'state' field in ~/.pogo/agent-status/<name>.json is the
+    agent's self-report of {'idle' | 'busy' | 'busy: <short label>'}. When
+    absent, the renderer defaults to 🟡 busy — idle is asserted only via
+    explicit self-report (the 'don't assume idle' rule).
+
+    `mg_claims` is the dict-of-lists returned by fetch_mg_claims_by_assignee()
+    so the badge for the no-state case can be the actual mg-id rather than a
+    placeholder."""
+    process = (agent_list_entry.get('status') or '').lower()
+    if process != 'running':
+        return ('⚪', 'offline', None)
+    if status_json is None:
+        return ('🔴', 'stalled', 'stale heartbeat')
+    if diag.get('health') != 'healthy':
+        return ('🔴', 'stalled', 'unhealthy')
+    state = status_json.get('state')
+    if state == 'idle':
+        return ('🟢', 'idle', None)
+    if isinstance(state, str) and state.startswith('busy'):
+        if ':' in state:
+            label = state.split(':', 1)[1].strip()
+            return ('🟡', 'busy', label or None)
+        return ('🟡', 'busy', None)
+    claims = mg_claims.get(name) or []
+    if claims:
+        return ('🟡', 'busy', claims[0])
+    return ('🟡', 'busy', None)
+
+
 def agent_cycle_paren(name: str) -> str:
     """Return '(last cycle X ago, next cycle in Y)' read from
     ~/.pogo/agent-status/<name>.json, or '(last cycle ?, next cycle ?)' if the
@@ -883,18 +977,23 @@ def handle_command(text: str) -> str:
         if not agents_list:
             return '🤖 No crew agents registered.'
         lines = [f'🤖 **Crew agents ({len(agents_list)}):**']
+        claims_by_assignee = fetch_mg_claims_by_assignee()
         for a in agents_list:
             name = a.get('name', '?')
             rc2, dout, _ = run_pogo(['agent', 'diagnose', name, '--json'])
-            health = '?'
+            diag = {}
             if rc2 == 0:
                 try:
-                    health = json.loads(dout).get('health', '?')
+                    diag = json.loads(dout)
                 except json.JSONDecodeError:
                     pass
-            status = a.get('status', '?')
-            cycle = agent_cycle_paren(name)
-            lines.append(f'  • {name:<12} — {status}, {health:<10} {cycle}')
+            sj = _safe_load_status_json(name)
+            emoji, label, badge = agent_state(name, a, diag, sj, claims_by_assignee)
+            cycle = agent_cycle_paren(name) if label != 'offline' else ''
+            badge_str = f' — {badge}' if badge else ''
+            lines.append(
+                f'  • {emoji} {label:<7} {name:<12}{badge_str}  {cycle}'.rstrip()
+            )
         return '\n'.join(lines)
 
     if low == 'balance':

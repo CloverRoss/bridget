@@ -5,6 +5,20 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.1.0] - 2026-05-10
+
+### Added
+
+- `agents` view: 4-state busy/idle emoji renderer. Each crew row now leads
+  with 🟢 idle / 🟡 busy / 🔴 stalled / ⚪ offline, computed from process
+  status, daemon health, status-JSON freshness, and an optional `state`
+  field that agents can write to `~/.pogo/agent-status/<name>.json` to
+  self-report idle vs. busy. The `running, healthy` text is dropped (the
+  state word subsumes it). Busy rows append the self-reported label or a
+  claimed mg-id as a trailing badge when present. Idle is asserted only
+  via explicit self-report — agents that don't yet write the `state` field
+  default to 🟡 busy. (mg-a147)
+
 ## [1.0.0] - 2026-05-09
 
 Feature parity with the original personal pogo-discord-bridge install. First
