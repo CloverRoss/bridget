@@ -31,15 +31,17 @@ Current planned work and known bugs are mirrored below from [ROADMAP.md](ROADMAP
 
 ### Roadmap
 
-v2 is complete. v3 P1 is shipped (mayor mail-action log consumer + quiet hours gating both landed via mayor.md prompt edits, mg-3ae5 and mg-34ae). v3 P2 below is deferred.
+v2 is complete. v3 P1 is shipped (mayor mail-action log consumer + quiet hours gating both landed via mayor.md prompt edits, mg-3ae5 and mg-34ae). No active v3 work remains.
 
-#### v3 P2 — Hardening / polish
+#### Backlogged items
+
+Parked behind explicit triggers — re-enter the roadmap when the trigger fires.
 
 ##### CI check that PR template was respected
-GH Actions workflow that diffs commit-modified roadmap/bug-list files against README mentions and warns if out of sync. Deferred until manual discipline has been observed across enough PRs to know whether drift is a real failure mode.
+GH Actions workflow that diffs commit-modified roadmap/bug-list files against README mentions and warns if out of sync. **Trigger:** evidence that the existing manual discipline (PR-template checkbox) is failing across enough PRs to call drift a real pattern.
 
 ##### Auto-wire fresh-install smoke test into `test.sh`
-`tests/smoke-fresh-install.sh` currently runs only when invoked explicitly. Auto-wire into `test.sh` (or add a `test.sh --full` flag) without breaking the current no-venv-required ergonomics. Deferred until manual discipline has been tested across a few PRs.
+`tests/smoke-fresh-install.sh` currently runs only when invoked explicitly. Auto-wire into `test.sh` (or add a `test.sh --full` flag) without breaking the current no-venv-required ergonomics. **Trigger:** a fresh-install regression lands on main because contributors didn't run the smoke test by hand.
 
 ### Known bugs
 
