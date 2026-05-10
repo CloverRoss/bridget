@@ -118,6 +118,7 @@ launchd/systemd unit can inject overrides without editing the file.
 - `nudge <agent> [reason]` — wake a stalled agent.
 - `restart` — git pull + restart bridget (after merging a PR; see [Remote restart](#remote-restart)).
 - `quiet <true|false> [HH:MM HH:MM]` — toggle agent quiet hours (default 23:00–06:00).
+- `preapprove [true [fast] | false]` — toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow (the default).
 - `help` (or `?`) — print this list inside Discord.
 
 bridget only acts on DMs from the user whose ID is in `DISCORD_USER_ID`;
@@ -142,6 +143,42 @@ Toggle from Discord:
 State lives at `~/.pogo/quiet.json`. This file is **shared with crew agents**,
 not bridget-private — don't move or rename it. It's runtime state; not
 committed to the repo.
+
+## Pre-approval
+
+Pre-approval is a phone-side policy that lets architect (and mayor) skip the
+human-mail round-trip for designs that don't actually need a decision. Both
+modes are off by default — pre-approval is opt-in.
+
+- `enabled` — when `true`, architect skips the approval mail for designs
+  with **no open questions** and just dispatches (with a one-line FYI mail).
+  Mayor stops sending the redundant "held off due to open questions"
+  follow-up mail. The user is pinged only when there's a genuine question.
+- `fast` — when `true` (only meaningful with `enabled=true`), architect also
+  auto-resolves open questions with its own recommendation and INFORMS the
+  user via a single FYI mail listing each decision. Worst case: revise after
+  the fact.
+
+Toggle from Discord:
+
+- `preapprove` — show the current state.
+- `preapprove true` — enable; `fast` off.
+- `preapprove true fast` — enable both.
+- `preapprove false` — disable (also forces `fast` off; you can't fast-mode
+  while pre-approval is disabled).
+
+`preapprove fast` (without an explicit `true`/`false`) is rejected with a
+usage hint — the enabled flag must always be stated.
+
+State lives at `~/.pogo/preapproval.json`. This file is **shared with crew
+agents**, not bridget-private — don't move or rename it. The JSON shape is
+`{enabled: bool, fast: bool, updated_at: ISO-8601 UTC}`; both architect and
+mayor consume it. It's runtime state; not committed to the repo.
+
+> **Note:** Architect + mayor consume `~/.pogo/preapproval.json` once their
+> follow-up prompt edits land (mg-1343 prompt-edit batch). Until that ships,
+> flipping the toggle on changes no behavior outside this command — the
+> file is settable and readable, but no agent acts on it yet.
 
 ## Task transition notifications
 

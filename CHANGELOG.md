@@ -5,6 +5,19 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.0.0] - 2026-05-10
+
+### Added
+
+- `preapprove [true [fast] | false]` command and `~/.pogo/preapproval.json`
+  storage. Lets the user toggle a phone-side policy that lets architect skip
+  approval mails for designs with no open questions, and (in `fast` mode)
+  auto-resolve open questions with the recommendation. Both flags default
+  to `false` — pre-approval is opt-in and changes no behavior on its own.
+  Architect + mayor consume the file in follow-ups (mg-1343 prompt-edit
+  batch); until those land, flipping the toggle is settable + readable but
+  no agent acts on it yet. (mg-8b70)
+
 ## [3.2.0] - 2026-05-10
 
 ### Removed

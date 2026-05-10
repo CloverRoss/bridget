@@ -37,6 +37,7 @@ HOME = Path.home()
 ENV_FILE = HOME / '.pogo' / 'bridget.env'
 SEEN_FILE = HOME / '.pogo' / 'bridget.seen'
 QUIET_FILE = HOME / '.pogo' / 'quiet.json'
+PREAPPROVAL_FILE = HOME / '.pogo' / 'preapproval.json'
 TASK_STATES_FILE = HOME / '.pogo' / 'bridget.task-states.json'
 IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
 MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
@@ -84,6 +85,7 @@ COMMAND_LIST = (
     "• `nudge <agent> [reason]` — wake a stalled agent\n"
     "• `restart` — git pull + restart bridget (after merging a PR)\n"
     "• `quiet <true|false> [HH:MM HH:MM]` — toggle agent quiet hours (default 23:00–06:00)\n"
+    "• `preapprove [true [fast] | false]` — toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.\n"
     "• `help` (or `?`) — this list"
 )
 
@@ -249,6 +251,38 @@ def save_quiet(state: dict) -> None:
     tmp = QUIET_FILE.parent / (QUIET_FILE.name + '.tmp')
     tmp.write_text(json.dumps(out, indent=2) + '\n')
     os.replace(tmp, QUIET_FILE)
+
+
+PREAPPROVAL_DEFAULTS = {'enabled': False, 'fast': False}
+
+
+def load_preapproval() -> dict:
+    """Read ~/.pogo/preapproval.json. Missing/unreadable file → defaults."""
+    if not PREAPPROVAL_FILE.exists():
+        return {**PREAPPROVAL_DEFAULTS, 'updated_at': ''}
+    try:
+        d = json.loads(PREAPPROVAL_FILE.read_text())
+    except Exception as e:
+        print(f'load_preapproval parse error: {e}', file=sys.stderr)
+        return {**PREAPPROVAL_DEFAULTS, 'updated_at': ''}
+    return {
+        'enabled': bool(d.get('enabled', False)),
+        'fast': bool(d.get('fast', False)),
+        'updated_at': d.get('updated_at', ''),
+    }
+
+
+def save_preapproval(state: dict) -> None:
+    """Atomically write ~/.pogo/preapproval.json with all schema keys populated."""
+    PREAPPROVAL_FILE.parent.mkdir(parents=True, exist_ok=True)
+    out = {
+        'enabled': bool(state.get('enabled', False)),
+        'fast': bool(state.get('fast', False)),
+        'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+    }
+    tmp = PREAPPROVAL_FILE.parent / (PREAPPROVAL_FILE.name + '.tmp')
+    tmp.write_text(json.dumps(out, indent=2) + '\n')
+    os.replace(tmp, PREAPPROVAL_FILE)
 
 
 def load_task_states() -> tuple[dict, bool]:
@@ -1145,6 +1179,33 @@ def handle_command(text: str) -> str:
         state['enabled'] = False
         save_quiet(state)
         return f"✓ quiet hours: disabled. (window {state['start']}–{state['end']} preserved for next enable)"
+
+    if low == 'preapprove' or low.startswith('preapprove '):
+        rest = [t.lower() for t in text.split()[1:]]
+        if not rest:
+            state = load_preapproval()
+            if state['enabled']:
+                fast = 'on' if state['fast'] else 'off'
+                return f"🟢 pre-approval: enabled (fast: {fast})."
+            return "pre-approval: disabled."
+        usage = "Usage: `preapprove [true [fast] | false]`"
+        if rest[0] not in ('true', 'false'):
+            return usage
+        if rest[0] == 'true':
+            if len(rest) == 1:
+                fast = False
+            elif len(rest) == 2 and rest[1] == 'fast':
+                fast = True
+            else:
+                return usage
+            save_preapproval({'enabled': True, 'fast': fast})
+            fast_word = 'on' if fast else 'off'
+            return f"✓ pre-approval: enabled (fast: {fast_word})."
+        # rest[0] == 'false'
+        if len(rest) != 1:
+            return usage
+        save_preapproval({'enabled': False, 'fast': False})
+        return "✓ pre-approval: disabled."
 
     if low == 'status' or low.startswith('status'):
         summary = get_status_summary()
