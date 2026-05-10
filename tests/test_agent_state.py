@@ -52,6 +52,40 @@ def test_offline_when_status_field_missing():
     ) == ('⚪', 'offline', None)
 
 
+# -- agent_state: non-crew (polecat) short-circuit --------------------------
+
+def test_polecat_running_no_claim_renders_busy():
+    """Polecats are ephemeral and don't write status JSONs; when running with
+    no claim they should still render 🟡 busy, not 🔴 stalled."""
+    assert bridget.agent_state(
+        'cat-mg-1234', {'status': 'running', 'type': 'polecat'}, {},
+        None, {},
+    ) == ('🟡', 'busy', None)
+
+
+def test_polecat_running_with_claim_uses_mg_id_badge():
+    assert bridget.agent_state(
+        'cat-mg-1234', {'status': 'running', 'type': 'polecat'}, {},
+        None, {'cat-mg-1234': ['mg-1234']},
+    ) == ('🟡', 'busy', 'mg-1234')
+
+
+def test_crew_with_missing_status_json_still_stalled():
+    """Crew agents follow the existing decision tree unchanged."""
+    assert bridget.agent_state(
+        'architect', {'status': 'running', 'type': 'crew'},
+        {'health': 'healthy'}, None, {},
+    ) == ('🔴', 'stalled', 'stale heartbeat')
+
+
+def test_missing_type_treated_as_crew():
+    """No 'type' key → fall through to the existing crew rules so unknown
+    agent kinds aren't silently downgraded to 'always busy'."""
+    assert bridget.agent_state(
+        'foo', {'status': 'running'}, {'health': 'healthy'}, None, {},
+    ) == ('🔴', 'stalled', 'stale heartbeat')
+
+
 # -- agent_state: stalled ----------------------------------------------------
 
 def test_stalled_when_status_json_missing():

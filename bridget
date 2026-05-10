@@ -441,6 +441,7 @@ def agent_state(name: str, agent_list_entry: dict, diag: dict,
 
     Decision tree (priority order):
         process != 'running'                       -> ('⚪', 'offline', None)
+        type and type != 'crew' [process running]  -> ('🟡', 'busy', <claimed mg-id> or None)
         status_json is None [process running]      -> ('🔴', 'stalled', 'stale heartbeat')
         diag.health != 'healthy'                   -> ('🔴', 'stalled', 'unhealthy')
         state == 'idle'                            -> ('🟢', 'idle', None)
@@ -459,6 +460,14 @@ def agent_state(name: str, agent_list_entry: dict, diag: dict,
     process = (agent_list_entry.get('status') or '').lower()
     if process != 'running':
         return ('⚪', 'offline', None)
+    agent_type = (agent_list_entry.get('type') or '').lower()
+    if agent_type and agent_type != 'crew':
+        # Polecats and other non-crew agents are ephemeral per-task
+        # processes; they don't write status JSONs. If they're
+        # running, they're busy by definition.
+        claims = mg_claims.get(name) or []
+        badge = claims[0] if claims else None
+        return ('🟡', 'busy', badge)
     if status_json is None:
         return ('🔴', 'stalled', 'stale heartbeat')
     if diag.get('health') != 'healthy':
