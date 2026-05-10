@@ -82,9 +82,8 @@ cat <<EOF
 
 Next steps:
   1. Edit $ENV_FILE — fill in DISCORD_BOT_TOKEN, DISCORD_USER_ID, DISCORD_SERVER_ID.
-  2. (Optional) Override default paths in $ENV_FILE if your design docs or
-     inbox repo live elsewhere:
-       - POGO_DESIGNS_DIR — default: ~/.pogo/designs
+  2. (Optional) Override default paths in $ENV_FILE if your inbox repo
+     lives elsewhere:
        - POGO_INBOX_REPO  — default: ~/.pogo/inbox
      See bridget.env.example for the full list of optional keys.
   3. Run bridget:

@@ -5,6 +5,14 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [3.2.0] - 2026-05-10
+
+### Removed
+
+- `next mg-XXXX` command. Mayor now auto-progresses design roadmaps via the
+  cascade rule, making manual advancement obsolete. (mg-38d2)
+- `POGO_DESIGNS_DIR` env var (only the `next` command read it). (mg-38d2)
+
 ## [3.1.1] - 2026-05-10
 
 ### Fixed

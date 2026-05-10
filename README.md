@@ -91,8 +91,7 @@ All config lives in `~/.pogo/bridget.env`. See
 | `MG_BIN`             | no  | Absolute path to `mg`. Default: resolved via `PATH`. |
 | `POGO_BIN`           | no  | Absolute path to `pogo`. Default: resolved via `PATH`. |
 | `POGO_MAIL_DIR`      | no  | Parent of `new/` and `cur/`. Default: `~/.macguffin/mail/human`. |
-| `POGO_DESIGNS_DIR`   | no  | Directory of `mg-XXXX.md` design docs (read by `next`). Default: `~/.pogo/designs`. |
-| `POGO_INBOX_REPO`    | no  | Repo where `idea:`, `bug:`, and `next` file new items. Default: `~/.pogo/inbox`. |
+| `POGO_INBOX_REPO`    | no  | Repo where `idea:` and `bug:` file new items. Default: `~/.pogo/inbox`. |
 | `POGO_MAIL_RECIPIENT` | no | Default recipient for `mail` command. Default: `mayor`. |
 | `BRIDGET_REPO_DIR`   | no  | Override for the bridget git checkout. Default: self-detected from the script's location (works for the install.sh-managed symlink). |
 
@@ -105,8 +104,6 @@ launchd/systemd unit can inject overrides without editing the file.
 - `reject mg-XXXX <reason>` — shelve idea + clear mails.
 - `revise mg-XXXX <feedback>` — request changes (auto-unshelves; clears mails).
 - `explain mg-XXXX <what>` — ask architect to elaborate without redesigning.
-- `next mg-XXXX` — file the next Roadmap task from this design as a new idea.
-  *(Requires `POGO_DESIGNS_DIR` and `POGO_INBOX_REPO`.)*
 - `read mg-XXXX` — print the latest mail referencing this id.
 - `idea: <text>` — file a new idea. *(Requires `POGO_INBOX_REPO`.)*
 - `idea: [tag] <text>` — file with an extra scope tag (e.g. `[bridget]`).

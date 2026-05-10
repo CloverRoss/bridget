@@ -15,8 +15,6 @@ Required keys:
 Optional keys:
     MG_BIN           — full path to the mg binary (otherwise resolved on PATH)
     POGO_MAIL_DIR    — parent of new/ and cur/ (default: ~/.macguffin/mail/human)
-    POGO_DESIGNS_DIR — directory containing mg-XXXX.md design docs
-                       (default: ~/.pogo/designs)
     POGO_INBOX_REPO  — repo to file new ideas into via mg new
                        (default: ~/.pogo/inbox)
 
@@ -74,7 +72,6 @@ COMMAND_LIST = (
     "• `reject mg-XXXX <reason>` — shelve idea + clear mails\n"
     "• `revise mg-XXXX <feedback>` — request changes (auto-unshelves; clears mails)\n"
     "• `explain mg-XXXX <what>` — ask architect to elaborate without redesigning\n"
-    "• `next mg-XXXX` — file the next Roadmap task from this design as a new idea\n"
     "• `read mg-XXXX` — print the latest mail referencing this id\n"
     "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
     "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` (when supported by architect) for crash-class bugs that should skip architect's design phase. (existing software is broken — not a new feature.)\n"
@@ -153,10 +150,6 @@ def load_config() -> dict:
     mail_parent = Path(mail_parent_str).expanduser() if mail_parent_str \
         else HOME / '.macguffin' / 'mail' / 'human'
 
-    designs_str = lookup('POGO_DESIGNS_DIR')
-    designs_dir = Path(designs_str).expanduser() if designs_str \
-        else HOME / '.pogo' / 'designs'
-
     inbox_str = lookup('POGO_INBOX_REPO')
     inbox_repo = str(Path(inbox_str).expanduser()) if inbox_str \
         else str(HOME / '.pogo' / 'inbox')
@@ -171,7 +164,6 @@ def load_config() -> dict:
         'pogo_bin': pogo_bin,
         'mail_parent': mail_parent,
         'mail_dir': mail_parent / 'new',
-        'designs_dir': designs_dir,
         'inbox_repo': inbox_repo,
         'mail_recipient': mail_recipient,
     }
@@ -183,7 +175,6 @@ USER_ID = CONFIG['user_id']
 SERVER_ID = CONFIG['server_id']
 MG_BIN = CONFIG['mg_bin']
 MAIL_DIR = CONFIG['mail_dir']
-DESIGNS_DIR = CONFIG['designs_dir']
 INBOX_REPO = CONFIG['inbox_repo']
 
 
@@ -922,44 +913,6 @@ def handle_command(text: str) -> str:
             log_mail_action('dismiss', mg_id=target)
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{target}`"
         return "Usage: `dismiss mg-XXXX` or `dismiss all`"
-
-    if low.startswith('next mg-'):
-        parts = text.split(None, 1)
-        if len(parts) < 2:
-            return "Usage: `next mg-XXXX`"
-        parent_id = parts[1].strip()
-        design_path = DESIGNS_DIR / f"{parent_id}.md"
-        if not design_path.exists():
-            return f"No design doc found for `{parent_id}`."
-        try:
-            content = design_path.read_text()
-        except Exception as e:
-            return f"Failed to read design: {e}"
-        rm = re.search(r'^## Roadmap[^\n]*\n(.*?)(?=^## |\Z)', content, re.MULTILINE | re.DOTALL)
-        if not rm:
-            return f"No Roadmap section in `{parent_id}`'s design."
-        roadmap_body = rm.group(1)
-        tm = re.search(r'^(### Task \d+[^\n]*)\n(.*?)(?=^### |\Z)', roadmap_body, re.MULTILINE | re.DOTALL)
-        if not tm:
-            return f"No tasks remaining in `{parent_id}`'s Roadmap."
-        heading = tm.group(1).strip()
-        body_text = tm.group(2).strip()
-        name_match = re.search(r'`([^`]+)`', heading)
-        short_name = name_match.group(1) if name_match else heading[:60]
-        idea_body = (
-            f"From {parent_id}'s Roadmap: {heading}\n\n"
-            f"Parent design: {design_path}\n\n"
-            f"---\n\n{body_text}"
-        )
-        rc, out, err = run_mg([
-            'new', '--type=idea',
-            f'--title=Roadmap: {short_name}',
-            f'--body={idea_body}',
-            '--assignee=architect',
-            '--tag=pogo-inbox',
-            f'--repo={INBOX_REPO}',
-        ])
-        return f"✓ next idea filed:\n```\n{out.strip()}\n```" if rc == 0 else f"✗ failed: {err or out}"
 
     if low.startswith('explain mg-'):
         parts = text.split(None, 2)

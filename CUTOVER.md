@@ -74,7 +74,6 @@ Copy values from the old `~/.pogo/discord-bridge.env` into the new
 | `DISCORD_USER_ID` | `DISCORD_USER_ID` | Verbatim. |
 | `DISCORD_SERVER_ID` | `DISCORD_SERVER_ID` | Verbatim. |
 | `POGO_INBOX_REPO` (if set) | `POGO_INBOX_REPO` | Verbatim. |
-| `POGO_DESIGNS_DIR` (if set) | `POGO_DESIGNS_DIR` | Verbatim. |
 | `POGO_MAIL_DIR` (if set) | `POGO_MAIL_DIR` | Verbatim. |
 | `MG_BIN` (if set) | `MG_BIN` | Verbatim. |
 | — | `POGO_BIN` | New. Default: PATH lookup. Set only if `pogo` isn't on PATH under launchd. |
