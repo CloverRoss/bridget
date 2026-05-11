@@ -94,17 +94,6 @@ POLL_INTERVAL = 5  # seconds
 DISCORD_MSG_LIMIT = 1900  # leave headroom under the 2000 char limit
 STATUS_OUTPUT_BUDGET = 1700
 
-# Static knowledge of which agents honor preapprove fields; bump entries when
-# agents add support. Read by the preapprove handler to surface per-agent
-# honoring so the user can tell what's actually live without inspecting each
-# agent's prompt.
-PREAPPROVE_SUPPORT = {
-    # agent → {'enabled': bool, 'fast': bool}
-    'architect': {'enabled': True,  'fast': False},
-    'mayor':     {'enabled': False, 'fast': False},
-    'director':  {'enabled': False, 'fast': False},
-}
-
 COMMAND_LIST = (
     "• `approve mg-XXXX` (or `dr-XXXX`) — approve a design (auto-clears related mails)\n"
     "• `reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails\n"
@@ -125,7 +114,7 @@ COMMAND_LIST = (
     "• `nudge <agent> [reason]` — wake a stalled agent\n"
     "• `restart` — git pull + restart bridget (after merging a PR)\n"
     "• `quiet <true|false> [HH:MM HH:MM]` — toggle agent quiet hours (default 23:00–06:00)\n"
-    "• `preapprove [true [fast] | false]` — toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow. Reply shows which agents currently honor each field; fast is not yet implemented for any agent.\n"
+    "• `preapprove [true [fast] | false]` — toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.\n"
     "• `help` (or `?`) — this list"
 )
 
@@ -323,20 +312,6 @@ def save_preapproval(state: dict) -> None:
     tmp = PREAPPROVAL_FILE.parent / (PREAPPROVAL_FILE.name + '.tmp')
     tmp.write_text(json.dumps(out, indent=2) + '\n')
     os.replace(tmp, PREAPPROVAL_FILE)
-
-
-def _preapprove_honor_lists(support: dict) -> tuple[list, list, list]:
-    """Split a PREAPPROVE_SUPPORT-shaped map into (honor_enabled, honor_fast,
-    not_honor_enabled). Insertion order is preserved so the rendered lines
-    follow the map's declared agent order."""
-    honor_enabled = [a for a, s in support.items() if s.get('enabled')]
-    honor_fast = [a for a, s in support.items() if s.get('fast')]
-    not_honor_enabled = [a for a, s in support.items() if not s.get('enabled')]
-    return honor_enabled, honor_fast, not_honor_enabled
-
-
-def _fmt_agent_list(agents: list, empty: str = '(none yet)') -> str:
-    return ', '.join(agents) if agents else empty
 
 
 def load_task_states() -> tuple[dict, bool]:
@@ -1652,18 +1627,12 @@ def handle_command(text: str) -> str | list[str]:
 
     if low == 'preapprove' or low.startswith('preapprove '):
         rest = [t.lower() for t in text.split()[1:]]
-        honor_enabled, honor_fast, not_honor_enabled = _preapprove_honor_lists(PREAPPROVE_SUPPORT)
         if not rest:
             state = load_preapproval()
-            if not state['enabled']:
-                return "pre-approval: disabled."
-            fast_word = 'on' if state['fast'] else 'off'
-            lines = [
-                f"🟢 pre-approval: enabled (fast: {fast_word}).",
-                f"   enabled honored by: {_fmt_agent_list(honor_enabled)}",
-                f"   fast honored by: {_fmt_agent_list(honor_fast)}",
-            ]
-            return '\n'.join(lines)
+            if state['enabled']:
+                fast_word = 'on' if state['fast'] else 'off'
+                return f"🟢 pre-approval: enabled (fast: {fast_word})."
+            return "pre-approval: disabled."
         usage = "Usage: `preapprove [true [fast] | false]`"
         if rest[0] not in ('true', 'false'):
             return usage
@@ -1676,22 +1645,7 @@ def handle_command(text: str) -> str | list[str]:
                 return usage
             save_preapproval({'enabled': True, 'fast': fast})
             fast_word = 'on' if fast else 'off'
-            lines = [
-                f"✓ pre-approval: enabled (fast: {fast_word}).",
-                f"   enabled honored by: {_fmt_agent_list(honor_enabled)}",
-            ]
-            if fast:
-                fast_empty = '(none yet — currently behaves like fast=off)'
-                lines.append(
-                    f"   fast honored by: {_fmt_agent_list(honor_fast, empty=fast_empty)}"
-                )
-                if not_honor_enabled:
-                    lines.append(
-                        f"   NOT honored by (enabled): {', '.join(not_honor_enabled)}"
-                    )
-            elif not_honor_enabled:
-                lines.append(f"   NOT honored by: {', '.join(not_honor_enabled)}")
-            return '\n'.join(lines)
+            return f"✓ pre-approval: enabled (fast: {fast_word})."
         # rest[0] == 'false'
         if len(rest) != 1:
             return usage
