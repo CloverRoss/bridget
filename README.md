@@ -131,8 +131,8 @@ director-side configuration only).
 - `bug: <text>` — file a new bug (existing software is broken, not a new feature). *(Requires `POGO_INBOX_REPO`.)*
 - `bug: [tag] <text>` — file a bug with an extra scope tag (e.g. `[discord-bridge]`).
 - `mail <subject>\n<body>` — send a mail to the configured recipient (default `mayor`; override via `POGO_MAIL_RECIPIENT`). Without a newline, the whole text becomes the subject.
-- `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read.
-- `dismiss all` — inbox-zero everything.
+- `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read. *Actionable mails — design approvals and Reports — are preserved; clear them via `approve` / `reject` / `revise` / `explain` instead.*
+- `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports — see [Pending reports & actionable mail](#pending-reports--actionable-mail)).
 - `status` — global pull view (unread mail + in-flight work).
 - `agents` — list crew agents with a 4-state busy/idle indicator. Each row leads with a colored-circle emoji and state word: 🟢 **idle** (running, healthy, fresh heartbeat, agent self-reports idle), 🟡 **busy** (running and either self-reports busy, has a claimed mg item, or hasn't yet adopted the self-report — *idle is asserted only via explicit self-report; absence of info defaults to busy*), 🔴 **stalled** (running but daemon unhealthy or status JSON > 30 min stale), or ⚪ **offline** (process not running). Busy rows append the self-reported label or claimed mg-id as a trailing badge when one is available. Agents opt into the idle/busy distinction by writing an optional `state` field (`"idle"`, `"busy"`, or `"busy: <short label>"`) to `~/.pogo/agent-status/<name>.json`. Non-crew agents (e.g. polecats) are ephemeral per-task processes with no heartbeat; they always render as 🟡 **busy** while running, badged with their claimed mg-id when available.
 - `balance` — check whether any agent is hitting credit balance errors.
@@ -144,6 +144,28 @@ director-side configuration only).
 
 bridget only acts on DMs from the user whose ID is in `DISCORD_USER_ID`;
 messages from anyone else are ignored.
+
+## Pending reports & actionable mail
+
+`status` lists two separate blocks for mail that needs an explicit
+decision:
+
+- **Pending approvals** — architect mails with `Subject: approval
+  needed …`, awaiting `approve` / `reject` / `revise` / `explain`.
+- **Pending reports** — director mails with `Subject: Report ready:
+  …`, awaiting the same verbs against the relevant `dr-XXXX` id.
+
+Both categories are **protected from `dismiss`**: neither
+`dismiss mg-XXXX` / `dismiss dr-XXXX` nor `dismiss all` will move
+them out of `human/new/`. The intent is "anything actionable must
+be cleared by the matching action verb" — the verbs are the only
+way to mark these mails read, which keeps decisions from getting
+accidentally inbox-zeroed.
+
+The protected prefixes are defined in the module-level
+`PROTECTED_SUBJECT_PREFIXES` tuple in `bridget`; expanding the list
+(e.g., to cover a future `Project ready:` workflow) is a one-line
+change.
 
 ## Quiet hours
 

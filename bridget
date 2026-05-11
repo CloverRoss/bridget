@@ -77,8 +77,8 @@ COMMAND_LIST = (
     "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
     "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` (when supported by architect) for crash-class bugs that should skip architect's design phase. (existing software is broken — not a new feature.)\n"
     "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
-    "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read\n"
-    "• `dismiss all` — inbox-zero everything\n"
+    "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)\n"
+    "• `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports)\n"
     "• `status` — global pull view (unread mail + in-flight work)\n"
     "• `agents` — list crew agents and health\n"
     "• `balance` — check whether any agent is hitting credit balance errors\n"
@@ -768,10 +768,33 @@ def find_mails_for(mg_id: str) -> list:
     return out
 
 
-def mark_mail_read(mg_id=None, all_unread: bool = False) -> int:
+# Subject-line prefixes for mails that require an explicit action verb
+# (approve / reject / revise / explain) to be marked read. `dismiss` and
+# `dismiss all` skip mails whose Subject matches one of these prefixes.
+# Add new prefixes here as more action-required workflows ship.
+PROTECTED_SUBJECT_PREFIXES = (
+    'Report ready:',     # director → human, awaiting approve/reject/revise
+    'approval needed',   # architect → human, awaiting approve/reject/revise
+)
+
+
+def _mail_subject(content: str) -> str:
+    """First Subject: header from a mail file, or '' if absent."""
+    for line in content.splitlines():
+        if line == '':
+            return ''
+        if line.startswith('Subject: '):
+            return line[len('Subject: '):]
+    return ''
+
+
+def mark_mail_read(mg_id=None, all_unread: bool = False,
+                   protect_actionable: bool = False) -> int:
     """Move mails from human/new/ → human/cur/. If mg_id is set, only mails
     whose subject/body references that id; if all_unread is True, every mail.
-    Returns the count moved."""
+    When protect_actionable is True, mails whose Subject begins with any
+    PROTECTED_SUBJECT_PREFIXES entry are skipped (left in new/).
+    Returns the count actually moved."""
     if not MAIL_DIR.exists():
         return 0
     cur_dir = MAIL_DIR.parent / 'cur'
@@ -780,6 +803,10 @@ def mark_mail_read(mg_id=None, all_unread: bool = False) -> int:
     for p in sorted(MAIL_DIR.iterdir()):
         try:
             if all_unread:
+                if protect_actionable:
+                    subj = _mail_subject(p.read_text())
+                    if any(subj.startswith(pre) for pre in PROTECTED_SUBJECT_PREFIXES):
+                        continue
                 p.rename(cur_dir / p.name)
                 n += 1
                 continue
@@ -788,6 +815,10 @@ def mark_mail_read(mg_id=None, all_unread: bool = False) -> int:
             content = p.read_text()
             # Match the mg-id case-insensitively; covers headers and body.
             if mg_id.lower() in content.lower():
+                if protect_actionable:
+                    subj = _mail_subject(content)
+                    if any(subj.startswith(pre) for pre in PROTECTED_SUBJECT_PREFIXES):
+                        continue
                 p.rename(cur_dir / p.name)
                 n += 1
         except Exception as e:
@@ -806,6 +837,24 @@ def scan_pending_approvals() -> list[str]:
                 if line == '':
                     break
                 if line.startswith('Subject: approval needed '):
+                    out.append(line[len('Subject: '):])
+                    break
+        except Exception:
+            pass
+    return out
+
+
+def scan_pending_reports() -> list[str]:
+    """Subjects of unread mails in human/new/ that are director Reports."""
+    if not MAIL_DIR.exists():
+        return []
+    out = []
+    for p in sorted(MAIL_DIR.iterdir()):
+        try:
+            for line in p.read_text().splitlines():
+                if line == '':
+                    break
+                if line.startswith('Subject: Report ready:'):
                     out.append(line[len('Subject: '):])
                     break
         except Exception:
@@ -836,6 +885,12 @@ def get_status_summary() -> str:
     if approvals:
         parts.append("\n**Pending approvals:**")
         for s in approvals:
+            parts.append(f"• {s}")
+
+    reports = scan_pending_reports()
+    if reports:
+        parts.append("\n**Pending reports:**")
+        for s in reports:
             parts.append(f"• {s}")
 
     rc, out, err = run_mg(['list', '--json'])
@@ -963,11 +1018,11 @@ def handle_command(text: str) -> str:
             return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"
         arg = parts[1].strip()
         if arg.lower() == 'all':
-            n = mark_mail_read(all_unread=True)
+            n = mark_mail_read(all_unread=True, protect_actionable=True)
             log_mail_action('dismiss-all')
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read (inbox-zero)"
         if arg.lower().startswith('mg-') or arg.lower().startswith('dr-'):
-            n = mark_mail_read(mg_id=arg)
+            n = mark_mail_read(mg_id=arg, protect_actionable=True)
             log_mail_action('dismiss', mg_id=arg)
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{arg}`"
         return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"

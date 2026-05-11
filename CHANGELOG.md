@@ -5,6 +5,25 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.0] - 2026-05-11
+
+### Added
+
+- `status` view now lists pending Reports alongside pending approvals.
+  A new `scan_pending_reports()` scanner walks `human/new/` for subjects
+  starting with `Report ready:` (director → human) and renders them as
+  their own "Pending reports:" block when non-empty. (mg-af02 / mg-dbf6)
+
+### Changed
+
+- `dismiss` and `dismiss all` no longer clear actionable mails — both
+  `approval needed …` (design approvals) and `Report ready: …` (director
+  Reports) now require the matching `approve` / `reject` / `revise` /
+  `explain` reply to be marked read. Protected prefixes live in a new
+  module-level `PROTECTED_SUBJECT_PREFIXES` tuple so future additions
+  (e.g., a kickoff workflow for `Project ready: …`) are a one-line
+  change. (mg-af02 / mg-dbf6)
+
 ## [4.0.0] - 2026-05-10
 
 ### Added
