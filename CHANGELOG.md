@@ -5,6 +5,17 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.7.0] - 2026-05-11
+
+### Changed
+
+- Status view now splits Project-roots (Type=idea + Project-status
+  tag) into a dedicated `Projects` section, rendered before
+  `Designs`. Children of Projects (`parent-project:` tag only)
+  stay in Designs/Tasks per their type. Project-status tags are
+  the 5-state vocab plus `kickoff-pending` / `kickoff-done` /
+  `roadmap-drafted`. (mg-946e)
+
 ## [4.6.0] - 2026-05-11
 
 ### Changed

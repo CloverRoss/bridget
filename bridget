@@ -118,7 +118,7 @@ COMMAND_LIST = (
     "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
     "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)\n"
     "• `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports)\n"
-    "• `status` — work in flight, by type (Reports / Designs / Bugs / Tasks)\n"
+    "• `status` — work in flight, by type (Projects / Reports / Designs / Bugs / Tasks)\n"
     "• `inbox` — pending mail, approvals, and Reports awaiting your reply\n"
     "• `agents` — list crew agents and health\n"
     "• `balance` — check whether any agent is hitting credit balance errors\n"
@@ -1118,7 +1118,7 @@ def get_inbox_summary() -> str:
 
 
 # Order in which status sections render; empty buckets are omitted.
-STATUS_SECTION_ORDER = ('Reports', 'Designs', 'Bugs', 'Tasks', 'Other')
+STATUS_SECTION_ORDER = ('Projects', 'Reports', 'Designs', 'Bugs', 'Tasks', 'Other')
 
 # mg item-type → status section. Anything not listed falls into "Other".
 _TYPE_TO_SECTION = {
@@ -1128,12 +1128,27 @@ _TYPE_TO_SECTION = {
     'task':   'Tasks',
 }
 
+# Tags that mark a Type=idea item as a Project root (vs. an ordinary design).
+# Project-roots get their own bucket so they don't drown in Designs.
+_PROJECT_TAGS = frozenset({
+    'kickoff-pending', 'kickoff-done', 'roadmap-drafted',
+    'in-progress', 'scheduled', 'ready-for-kickoff',
+    'done', 'cancelled',
+})
+
 
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
-    """Bucket in-flight items by type. Unknown types fall into 'Other'."""
+    """Bucket in-flight items by type. Unknown types fall into 'Other'.
+
+    Type=idea items carrying a Project-status tag (see _PROJECT_TAGS) bucket
+    into 'Projects' instead of 'Designs' so Project-roots stay visible.
+    """
     buckets: dict[str, list[dict]] = {s: [] for s in STATUS_SECTION_ORDER}
     for item in items:
-        section = _TYPE_TO_SECTION.get(item.get('type'), 'Other')
+        if item.get('type') == 'idea' and _PROJECT_TAGS & set(item.get('tags') or []):
+            section = 'Projects'
+        else:
+            section = _TYPE_TO_SECTION.get(item.get('type'), 'Other')
         buckets[section].append(item)
     return buckets
 
