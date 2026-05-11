@@ -192,7 +192,9 @@ def test_read_no_design_no_mail_returns_not_found(bridget, monkeypatch):
 
 def test_read_design_still_marks_referencing_mail_read(bridget, monkeypatch, tmp_path):
     # auto-mark-read: a 'new' mail referencing the id is moved to cur/ even
-    # though we surface the design (not the mail) inline.
+    # though we surface the design (not the mail) inline. Protected mails
+    # (approval needed / Report ready:) skip this rename — covered in
+    # test_read_protected_mails.py.
     (bridget.DESIGNS_DIR / 'mg-9999.md').write_text(
         '---\nstatus: awaiting-approval\n---\n# d\nbody\n'
     )
@@ -201,9 +203,9 @@ def test_read_design_still_marks_referencing_mail_read(bridget, monkeypatch, tmp
     new_dir.mkdir(parents=True)
     monkeypatch.setattr(bridget, 'MAIL_DIR', new_dir)
     mail_path = new_dir / 'm.txt'
-    mail_path.write_text('From: architect\nSubject: approval needed: mg-9999\n\nbody\n')
+    mail_path.write_text('From: human\nSubject: approve mg-9999\n\nbody\n')
     monkeypatch.setattr(bridget, 'find_mails_for', lambda _id: [
-        (mail_path, {'from': 'architect', 'subject': 'approval needed: mg-9999', 'body': 'body'}, 'new'),
+        (mail_path, {'from': 'human', 'subject': 'approve mg-9999', 'body': 'body'}, 'new'),
     ])
     monkeypatch.setattr(bridget, 'log_mail_action', lambda *_a, **_k: None)
     reply = bridget.handle_command('read mg-9999')

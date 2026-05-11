@@ -5,6 +5,18 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.1] - 2026-05-11
+
+### Fixed
+
+- `read mg-XXXX` no longer auto-marks approval/Report mails as
+  read; they stay surfaced in inbox until you reply with the
+  matching action verb. The `read` handler now honors
+  `PROTECTED_SUBJECT_PREFIXES` (the same list `dismiss` already
+  respects), so `inbox`'s pending-approvals view survives a
+  re-read of the underlying design. The mail footer renders
+  `unread (action required)` for these mails. (mg-e818)
+
 ## [4.4.0] - 2026-05-11
 
 ### Changed
