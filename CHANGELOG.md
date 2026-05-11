@@ -5,6 +5,20 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.6.0] - 2026-05-11
+
+### Changed
+
+- `preapprove` handler now reports which agents currently
+  honor `enabled` and `fast`, and warns when `fast` is set
+  but no agent implements it. The reply renders three lines
+  derived from a static `PREAPPROVE_SUPPORT` map: who honors
+  `enabled`, who honors `fast`, and (on set actions) who does
+  *not* honor `enabled`. Bridget used to silently accept
+  settings no agent respected — now the user can tell at a
+  glance what's live. Bump `PREAPPROVE_SUPPORT` when an agent
+  gains honoring. (mg-628d)
+
 ## [4.5.0] - 2026-05-11
 
 ### Added
