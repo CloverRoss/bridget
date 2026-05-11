@@ -5,6 +5,16 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.5.0] - 2026-05-11
+
+### Added
+
+- `read m<N>` reads mails by inbox index; works for id-less
+  mails that had no `mg-XXXX` to address. `inbox` now numbers
+  each unread mail as `[m1 / …]`, `[m2 / …]`, … so the slot is
+  copy-paste-ready. Indices come from the most recent `inbox`
+  output and may shift if new mail arrives in between. (mg-8d3d)
+
 ## [4.4.1] - 2026-05-11
 
 ### Fixed
