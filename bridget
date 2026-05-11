@@ -99,6 +99,8 @@ COMMAND_LIST = (
     "• `reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails\n"
     "• `revise mg-XXXX <feedback>` (or `dr-XXXX`) — request changes (auto-unshelves; clears mails)\n"
     "• `explain mg-XXXX <what>` (or `dr-XXXX`) — ask architect to elaborate without redesigning\n"
+    "• `hold mg-XXXX [<reason>]` (or `dr-XXXX`) — ask mayor to pause work on this id; reason is optional\n"
+    "• `kickoff mg-XXXX` (or `dr-XXXX`) — ask mayor to start the project-kickoff workflow for this id\n"
     "• `read mg-XXXX` (or `dr-XXXX`) — show the design doc (or fall back to the latest mail if no design exists)\n"
     "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
     "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` (when supported by architect) for crash-class bugs that should skip architect's design phase. (existing software is broken — not a new feature.)\n"
@@ -1310,6 +1312,47 @@ def handle_command(text: str) -> str | list[str]:
             f'--body={topic}',
         ])
         return f"✓ explain request sent: `{mg_id}`" if rc == 0 else f"✗ failed: {err or out}"
+
+    if low == 'hold' or low.startswith('hold '):
+        parts = text.split(None, 2)
+        if len(parts) < 2:
+            return "Usage: `hold mg-XXXX [<reason>]` (or `dr-XXXX`)"
+        mg_id = parts[1]
+        if not (mg_id.lower().startswith('mg-') or mg_id.lower().startswith('dr-')):
+            return "Usage: `hold mg-XXXX [<reason>]` (or `dr-XXXX`)"
+        reason = parts[2] if len(parts) > 2 else ''
+        sh_rc, _sh_out, sh_err = run_mg(['show', mg_id])
+        if sh_rc != 0:
+            return f"✗ no such work item: `{mg_id}`"
+        rc, out, err = run_mg([
+            'mail', 'send', 'mayor',
+            '--from=human',
+            f'--subject=hold {mg_id}',
+            f'--body={reason}',
+        ])
+        if rc == 0:
+            return f"✓ hold sent to mayor: `{mg_id}`"
+        return f"✗ hold failed: {(err or out).strip()[:200]}"
+
+    if low == 'kickoff' or low.startswith('kickoff '):
+        parts = text.split(None, 1)
+        if len(parts) < 2:
+            return "Usage: `kickoff mg-XXXX` (or `dr-XXXX`)"
+        mg_id = parts[1].strip()
+        if not (mg_id.lower().startswith('mg-') or mg_id.lower().startswith('dr-')):
+            return "Usage: `kickoff mg-XXXX` (or `dr-XXXX`)"
+        sh_rc, _sh_out, sh_err = run_mg(['show', mg_id])
+        if sh_rc != 0:
+            return f"✗ no such work item: `{mg_id}`"
+        rc, out, err = run_mg([
+            'mail', 'send', 'mayor',
+            '--from=human',
+            f'--subject=kickoff {mg_id}',
+            '--body=',
+        ])
+        if rc == 0:
+            return f"✓ kickoff sent to mayor: `{mg_id}`"
+        return f"✗ kickoff failed: {(err or out).strip()[:200]}"
 
     if low == 'agents' or low == 'agent list' or low == 'crew':
         rc, out, err = run_pogo(['agent', 'list', '--json'])

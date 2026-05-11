@@ -125,6 +125,8 @@ director-side configuration only).
 - `reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails.
 - `revise mg-XXXX <feedback>` (or `dr-XXXX`) — request changes (auto-unshelves; clears mails).
 - `explain mg-XXXX <what>` (or `dr-XXXX`) — ask architect to elaborate without redesigning.
+- `hold mg-XXXX [<reason>]` (or `dr-XXXX`) — ask mayor to pause work on this id. Mails `mayor` with `from=human`, `subject=hold <id>`, body=reason (empty if omitted). The id is validated via `mg show` before the mail is sent.
+- `kickoff mg-XXXX` (or `dr-XXXX`) — ask mayor to start the project-kickoff workflow for this id. Mails `mayor` with `from=human`, `subject=kickoff <id>`, empty body. The id is validated via `mg show` before the mail is sent.
 - `read mg-XXXX` (or `dr-XXXX`) — print the latest mail referencing this id.
 - `idea: <text>` — file a new idea. *(Requires `POGO_INBOX_REPO`.)*
 - `idea: [tag] <text>` — file with an extra scope tag (e.g. `[bridget]`).

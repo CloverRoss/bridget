@@ -5,6 +5,21 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.3.0] - 2026-05-11
+
+### Added
+
+- New `kickoff <id>` and `hold <id> [<reason>]` commands. Both mail
+  `mayor` with `--from=human`; subjects are `kickoff <id>` and
+  `hold <id>` respectively. `kickoff` sends an empty body; `hold`
+  sends the reason (empty if omitted). The id is validated via
+  `mg show <id>` before the mail is sent, so a typo returns
+  `✗ no such work item: <id>` instead of silently mailing mayor.
+  Both id prefixes (`mg-` and `dr-`) are accepted. Mayor is the
+  next agent in the project-kickoff workflow per mg-94dc; this
+  unblocks the director→mayor→user kickoff flow that was deferred
+  from mg-5418 Task 2. (mg-d6da / mg-5418)
+
 ## [4.2.0] - 2026-05-11
 
 ### Added
