@@ -5,10 +5,13 @@ Loads the bridget script under a fake $HOME so import-time config loading
 succeeds without a real Discord token or pogo install. Each test exercises
 one branch of the state-derivation decision tree.
 
-mg-b4c0 changed the model: state derives from `pogo agent diagnose` health
-(not the agent's self-reported JSON state field). The JSON is now advisory
-— used only for the optional badge label when the derived state is `busy`
-AND the JSON file mtime is within AGENT_STATUS_FRESH (2 min).
+mg-9939 refined the mg-b4c0 model. pogod's `pogo agent diagnose` returns
+healthy or stalled for any alive crew agent — never idle — so a pure
+health→state map renders every alive agent as busy. Fix: when health is
+healthy, consult the agent's self-reported JSON state as the tiebreaker.
+State=busy iff the JSON `state` starts with 'busy:' AND mtime is within
+AGENT_STATUS_FRESH (2 min); otherwise state=idle. Other health values
+(stalled / exited / dead) ignore the JSON.
 """
 import importlib.util
 import json
@@ -66,23 +69,32 @@ def _clear_status(name: str) -> None:
         path.unlink()
 
 
-# -- _state_from_diag: health → state mapping (per design §A) ---------------
+# -- _state_from_diag: non-healthy health values ----------------------------
+# 'healthy' is exercised separately below since it consults the JSON state.
 
 @pytest.mark.parametrize('health,expected_state', [
-    ('healthy', 'busy'),
     ('idle',    'idle'),
     ('stalled', 'stalled'),
     ('exited',  'offline'),
-    ('dead',    'stalled'),  # registered as running but OS proc gone — wedge
+    ('dead',    'offline'),  # mg-9939: dead → offline (was stalled)
 ])
-def test_state_from_diag_maps_each_health_value(health, expected_state):
+def test_state_from_diag_maps_non_healthy_values(health, expected_state):
     _clear_status('agent-x')
     out = bridget._state_from_diag('agent-x', {'health': health, 'idle_duration': '5m'})
     assert out['state'] == expected_state
     assert out['health_raw'] == health
     assert out['idle_duration'] == '5m'
-    # No fresh JSON exists, so badge is None regardless of state.
     assert out['badge'] is None
+
+
+def test_state_from_diag_non_healthy_ignores_json_state():
+    """A fresh JSON saying 'busy: …' must not flip a stalled/exited/dead
+    agent into busy. Only `healthy` consults the JSON tiebreaker."""
+    _write_status('worker', {'state': 'busy: drafting mg-9dea'}, age_seconds=5)
+    for health, expected in [('stalled', 'stalled'), ('exited', 'offline'), ('dead', 'offline')]:
+        out = bridget._state_from_diag('worker', {'health': health})
+        assert out['state'] == expected, f'{health} should map to {expected}'
+        assert out['badge'] is None, f'{health} should not carry the JSON badge'
 
 
 def test_state_from_diag_unknown_health_treated_as_stalled(capsys):
@@ -102,77 +114,81 @@ def test_state_from_diag_missing_health_treated_as_stalled(capsys):
     assert out['health_raw'] == ''
 
 
-# -- badge: fresh JSON gating ------------------------------------------------
+# -- _state_from_diag: healthy + JSON tiebreaker (mg-9939) ------------------
+# pogod's diagnose returns healthy for any alive crew agent, so a static
+# healthy → busy map renders every alive agent as busy. The agent's
+# self-reported JSON state is the tiebreaker.
 
-def test_badge_appears_when_state_busy_and_json_fresh():
-    _write_status('busybee', {'state': 'busy: drafting mg-9dea'}, age_seconds=10)
-    out = bridget._state_from_diag('busybee', {'health': 'healthy'})
-    assert out['state'] == 'busy'
-    assert out['badge'] == 'drafting mg-9dea'
-
-
-def test_badge_dropped_when_state_busy_but_json_stale():
-    """JSON older than AGENT_STATUS_FRESH (2min) → no badge, even though
-    state derives as busy. This is the core mg-b4c0 fix: stale 'drafted'
-    labels can't linger after the agent has gone back to idle wait."""
-    _write_status('busybee', {'state': 'busy: drafting mg-9dea'}, age_seconds=300)
-    out = bridget._state_from_diag('busybee', {'health': 'healthy'})
-    assert out['state'] == 'busy'
-    assert out['badge'] is None
-
-
-def test_badge_dropped_when_state_idle_even_if_json_fresh():
-    """Even with a fresh JSON, an idle derived state should never carry a
-    busy-label badge. Resolves the user's pain about stale 'busy' labels."""
-    _write_status('rester', {'state': 'busy: drafting mg-9dea'}, age_seconds=10)
-    out = bridget._state_from_diag('rester', {'health': 'idle'})
+def test_healthy_with_no_json_yields_idle():
+    """Core mg-9939 fix: without a fresh self-report we cannot tell busy
+    apart from idle, so default to idle. (The old healthy → busy map was
+    the mg-eb6e regression.)"""
+    _clear_status('quiet')
+    out = bridget._state_from_diag('quiet', {'health': 'healthy'})
     assert out['state'] == 'idle'
     assert out['badge'] is None
 
 
-def test_badge_dropped_when_state_stalled():
-    _write_status('zombie', {'state': 'busy: drafting mg-9dea'}, age_seconds=10)
-    out = bridget._state_from_diag('zombie', {'health': 'stalled'})
-    assert out['state'] == 'stalled'
-    assert out['badge'] is None
-
-
-def test_badge_dropped_when_json_missing():
-    _clear_status('ghost')
-    out = bridget._state_from_diag('ghost', {'health': 'healthy'})
+def test_healthy_with_fresh_busy_json_yields_busy_with_badge():
+    _write_status('worker', {'state': 'busy: drafting mg-9dea'}, age_seconds=10)
+    out = bridget._state_from_diag('worker', {'health': 'healthy'})
     assert out['state'] == 'busy'
+    assert out['badge'] == 'drafting mg-9dea'
+
+
+def test_healthy_with_stale_busy_json_yields_idle():
+    """JSON older than AGENT_STATUS_FRESH loses its vote — back to idle
+    even when state field still says 'busy: …'. This is what stops stale
+    'drafted mg-XXXX' labels lingering for an hour after the agent slept."""
+    _write_status('worker', {'state': 'busy: drafting mg-9dea'}, age_seconds=300)
+    out = bridget._state_from_diag('worker', {'health': 'healthy'})
+    assert out['state'] == 'idle'
     assert out['badge'] is None
 
 
-def test_badge_dropped_when_json_state_field_is_bare_busy():
-    """`busy` with no colon yields no badge — there's no label to surface
-    and we don't repeat the word 'busy' as a badge."""
+def test_healthy_with_fresh_non_busy_json_yields_idle():
+    """If the JSON's state doesn't start with 'busy:' the agent is not
+    actively working — render as idle."""
+    _write_status('rester', {'state': 'idle'}, age_seconds=10)
+    out = bridget._state_from_diag('rester', {'health': 'healthy'})
+    assert out['state'] == 'idle'
+    assert out['badge'] is None
+
+
+def test_healthy_with_bare_busy_yields_idle():
+    """'busy' without a colon doesn't start with 'busy:' — treat as idle
+    rather than guessing. (Bare 'busy' shouldn't be written by anything we
+    ship; this just guards the prefix check.)"""
     _write_status('plain', {'state': 'busy'}, age_seconds=10)
     out = bridget._state_from_diag('plain', {'health': 'healthy'})
+    assert out['state'] == 'idle'
     assert out['badge'] is None
 
 
-def test_badge_dropped_when_json_state_field_is_idle_but_derived_busy():
-    """If JSON contradicts diagnose (says idle while we derive busy), the
-    JSON is stale — drop the badge rather than show 'idle' under a busy
-    row."""
-    _write_status('mismatch', {'state': 'idle'}, age_seconds=10)
-    out = bridget._state_from_diag('mismatch', {'health': 'healthy'})
+def test_healthy_with_busy_colon_empty_label_yields_busy_no_badge():
+    """'busy:' with empty label still starts with 'busy:' → state=busy.
+    Badge stays None because there's no human-readable label content."""
+    _write_status('terse', {'state': 'busy:'}, age_seconds=10)
+    out = bridget._state_from_diag('terse', {'health': 'healthy'})
     assert out['state'] == 'busy'
     assert out['badge'] is None
 
 
-def test_badge_handles_busy_colon_with_empty_label():
-    _write_status('terse', {'state': 'busy:'}, age_seconds=10)
-    out = bridget._state_from_diag('terse', {'health': 'healthy'})
-    assert out['badge'] is None
-
-
-def test_badge_dropped_when_json_malformed():
+def test_healthy_with_malformed_json_yields_idle():
+    """Unparseable JSON contributes no tiebreaker vote — default to idle."""
     path = bridget.AGENT_STATUS_DIR / 'broken.json'
     path.write_text('not json {')
     out = bridget._state_from_diag('broken', {'health': 'healthy'})
-    assert out['state'] == 'busy'
+    assert out['state'] == 'idle'
+    assert out['badge'] is None
+
+
+def test_idle_health_drops_badge_even_if_json_fresh():
+    """A fresh JSON 'busy: …' must not carry over to idle health — the
+    JSON only votes when health is healthy."""
+    _write_status('rester', {'state': 'busy: drafting mg-9dea'}, age_seconds=10)
+    out = bridget._state_from_diag('rester', {'health': 'idle'})
+    assert out['state'] == 'idle'
     assert out['badge'] is None
 
 
@@ -200,18 +216,37 @@ def test_compute_agent_state_diagnose_json_parse_error_returns_stalled(capsys):
 
 
 @pytest.mark.parametrize('health,expected', [
-    ('healthy', 'busy'),
+    # 'healthy' is JSON-state-dependent — covered separately above.
     ('idle',    'idle'),
     ('stalled', 'stalled'),
     ('exited',  'offline'),
-    ('dead',    'stalled'),
+    ('dead',    'offline'),
 ])
 def test_compute_agent_state_full_loop_each_health(health, expected):
+    _clear_status(f'agent-{health}')
     diag_out = json.dumps({'health': health, 'idle_duration': '0s'})
     with mock.patch.object(bridget, 'run_pogo', return_value=(0, diag_out, '')):
         out = bridget.compute_agent_state(f'agent-{health}')
     assert out['state'] == expected
     assert out['health_raw'] == health
+
+
+def test_compute_agent_state_healthy_with_fresh_busy_json():
+    _write_status('thearchitect', {'state': 'busy: drafting mg-1234'}, age_seconds=10)
+    diag_out = json.dumps({'health': 'healthy', 'idle_duration': '0s'})
+    with mock.patch.object(bridget, 'run_pogo', return_value=(0, diag_out, '')):
+        out = bridget.compute_agent_state('thearchitect')
+    assert out['state'] == 'busy'
+    assert out['badge'] == 'drafting mg-1234'
+
+
+def test_compute_agent_state_healthy_without_json_yields_idle():
+    _clear_status('thearchitect')
+    diag_out = json.dumps({'health': 'healthy', 'idle_duration': '0s'})
+    with mock.patch.object(bridget, 'run_pogo', return_value=(0, diag_out, '')):
+        out = bridget.compute_agent_state('thearchitect')
+    assert out['state'] == 'idle'
+    assert out['badge'] is None
 
 
 def test_compute_agent_state_invokes_diagnose_with_expected_args():
@@ -275,15 +310,15 @@ def _patch_diagnose(health: str):
     )
 
 
-def test_crew_busy_when_diagnose_healthy_no_json():
-    """No fresh JSON → derived busy with no badge (NOT the old 'no JSON
-    means stalled' rule)."""
+def test_crew_idle_when_diagnose_healthy_no_json():
+    """mg-9939: healthy with no fresh JSON tiebreaker → idle, not busy.
+    pogod's healthy doesn't distinguish actively-working from waiting."""
     _clear_status('architect')
     with _patch_diagnose('healthy'):
         result = bridget.agent_state(
             'architect', {'status': 'running', 'type': 'crew'}, {},
         )
-    assert result == ('🟡', 'busy', None)
+    assert result == ('🟢', 'idle', None)
 
 
 def test_crew_idle_when_diagnose_idle():
@@ -311,15 +346,15 @@ def test_crew_offline_when_diagnose_exited():
     assert result == ('⚪', 'offline', None)
 
 
-def test_crew_stalled_when_diagnose_dead():
-    """`dead` (registered as running but OS proc gone — wedge) maps to
-    🔴 stalled, not ⚪ offline, because it indicates an unhealthy mismatch
-    between pogod's state and reality."""
+def test_crew_offline_when_diagnose_dead():
+    """mg-9939: `dead` (registered as running but OS proc gone — wedge)
+    maps to ⚪ offline. The previous `dead → stalled` mapping conflated
+    a wedge with a slow agent."""
     with _patch_diagnose('dead'):
         result = bridget.agent_state(
             'architect', {'status': 'running', 'type': 'crew'}, {},
         )
-    assert result == ('🔴', 'stalled', None)
+    assert result == ('⚪', 'offline', None)
 
 
 def test_crew_busy_includes_badge_from_fresh_json():
@@ -331,18 +366,20 @@ def test_crew_busy_includes_badge_from_fresh_json():
     assert result == ('🟡', 'busy', 'drafting mg-9dea')
 
 
-def test_crew_busy_drops_badge_when_json_stale():
+def test_crew_idle_when_diagnose_healthy_and_json_stale():
+    """mg-9939: stale JSON loses its tiebreaker vote — agent renders as
+    idle (not 'busy with no badge'), so a sleeping agent doesn't keep
+    flashing yellow forever."""
     _write_status('architect', {'state': 'busy: drafting mg-9dea'}, age_seconds=600)
     with _patch_diagnose('healthy'):
         result = bridget.agent_state(
             'architect', {'status': 'running', 'type': 'crew'}, {},
         )
-    assert result == ('🟡', 'busy', None)
+    assert result == ('🟢', 'idle', None)
 
 
 def test_crew_idle_drops_badge_even_with_fresh_json():
-    """Core mg-b4c0 behavior: badge disappears the moment derived state
-    flips to idle, regardless of what the JSON still says."""
+    """When diagnose says idle directly, the JSON is not consulted."""
     _write_status('architect', {'state': 'busy: drafting mg-9dea'}, age_seconds=5)
     with _patch_diagnose('idle'):
         result = bridget.agent_state(

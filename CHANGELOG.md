@@ -5,6 +5,22 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.1.1] - 2026-05-11
+
+### Fixed
+
+- `agents` view no longer renders every alive agent as 🟡 busy. pogod's
+  `pogo agent diagnose` returns `healthy` for any crew agent whose
+  process is alive within its idle threshold — never `idle` — so the
+  4.1.0 healthy → busy map (mg-eb6e) tagged every healthy agent as
+  busy. State now consults the agent's self-reported JSON state field
+  as a tiebreaker when health is `healthy`: state=busy iff the JSON
+  `state` starts with `busy:` AND its mtime is within 2 minutes;
+  otherwise state=idle. Other health values (stalled / exited / dead)
+  still ignore the JSON. Also: `dead` (registered as running but OS
+  proc gone — wedge) now maps to ⚪ offline instead of 🔴 stalled, to
+  match the rest of the offline lineage. (mg-9939)
+
 ## [4.1.0] - 2026-05-11
 
 ### Added

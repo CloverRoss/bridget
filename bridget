@@ -49,14 +49,17 @@ AGENT_STATUS_STALE = datetime.timedelta(minutes=30)
 AGENT_STATUS_FRESH = datetime.timedelta(seconds=120)
 
 # Maps `pogo agent diagnose --json` health → bridget agents-view state.
-# Authoritative as of mg-b4c0; the agent's self-reported JSON state field
-# never influences this decision.
+# `healthy` is intentionally absent: pogod's diagnose only emits healthy or
+# stalled for live crew agents, so a static map would render every alive
+# agent as busy (the mg-eb6e regression). _state_from_diag handles healthy
+# with the JSON-state tiebreaker (mg-9939): busy iff the agent's
+# self-reported state starts with 'busy:' and the JSON mtime is within
+# AGENT_STATUS_FRESH; otherwise idle.
 HEALTH_TO_STATE = {
-    'healthy': 'busy',     # recently active output
-    'idle':    'idle',     # quiet but within stall threshold
+    'idle':    'idle',     # if pogod ever surfaces idle directly
     'stalled': 'stalled',  # quiet longer than the per-agent threshold
     'exited':  'offline',  # process has exited cleanly
-    'dead':    'stalled',  # registered as running but OS proc gone — wedge
+    'dead':    'offline',  # registered as running but OS proc gone — wedge
 }
 
 STATE_EMOJI = {
@@ -454,22 +457,17 @@ def fetch_mg_claims_by_assignee() -> dict[str, list[str]]:
     return by_assignee
 
 
-def _read_fresh_status_label(name: str) -> str | None:
-    """Return the agent's self-reported badge label from
+def _read_fresh_status_raw(name: str) -> str | None:
+    """Return the agent's self-reported `state` field from
     ~/.pogo/agent-status/<name>.json, IFF the file's mtime is within
     AGENT_STATUS_FRESH (2 minutes by default).
 
-    This is intentionally only the *label* part — if the file says
-    `"state": "busy: drafting mg-XXXX"` we return `"drafting mg-XXXX"`. A
-    bare `"busy"` (no colon) and any non-busy / missing / malformed value
-    yield None — the caller already knows the derived state, so the badge
-    is for the human-readable detail, not for re-asserting "busy"."""
+    Returns None for: missing file, unreadable mtime, mtime past
+    AGENT_STATUS_FRESH, unparseable JSON, or missing/non-string state."""
     path = AGENT_STATUS_DIR / f'{name}.json'
     try:
         st = path.stat()
-    except FileNotFoundError:
-        return None
-    except OSError:
+    except (FileNotFoundError, OSError):
         return None
     age = datetime.datetime.now(datetime.timezone.utc).timestamp() - st.st_mtime
     if age > AGENT_STATUS_FRESH.total_seconds():
@@ -479,21 +477,37 @@ def _read_fresh_status_label(name: str) -> str | None:
     except Exception:
         return None
     raw = data.get('state')
-    if not isinstance(raw, str):
-        return None
-    if raw.startswith('busy:'):
-        label = raw.split(':', 1)[1].strip()
-        return label or None
-    return None
+    return raw if isinstance(raw, str) else None
 
 
 def _state_from_diag(name: str, diag: dict) -> dict:
     """Convert a parsed diagnose dict into the compute_agent_state result.
 
     Split out from compute_agent_state so tests can exercise the mapping
-    without mocking subprocess calls."""
+    without mocking subprocess calls.
+
+    `healthy` is the only health that consults the JSON: pogod's diagnose
+    returns healthy for any alive crew agent, so the agent's self-reported
+    state (fresh ≤ AGENT_STATUS_FRESH, prefix `busy:`) is the tiebreaker
+    between busy and idle (mg-9939)."""
     health = (diag.get('health') or '').lower()
     idle_duration = diag.get('idle_duration') or '?'
+    if health == 'healthy':
+        raw = _read_fresh_status_raw(name)
+        if raw is not None and raw.startswith('busy:'):
+            label = raw.split(':', 1)[1].strip() or None
+            return {
+                'state': 'busy',
+                'health_raw': health,
+                'badge': label,
+                'idle_duration': idle_duration,
+            }
+        return {
+            'state': 'idle',
+            'health_raw': health,
+            'badge': None,
+            'idle_duration': idle_duration,
+        }
     state = HEALTH_TO_STATE.get(health)
     if state is None:
         print(
@@ -507,11 +521,10 @@ def _state_from_diag(name: str, diag: dict) -> dict:
             'badge': None,
             'idle_duration': idle_duration,
         }
-    badge = _read_fresh_status_label(name) if state == 'busy' else None
     return {
         'state': state,
         'health_raw': health,
-        'badge': badge,
+        'badge': None,
         'idle_duration': idle_duration,
     }
 
@@ -532,16 +545,22 @@ def compute_agent_state(name: str) -> dict:
           'idle_duration': human-readable duration from diagnose (or '?').
         }
 
-    Hard rules per mg-b4c0:
-      • State derives from diagnose `health` only — the JSON `state` field
-        MUST NOT influence the busy/idle/stalled/offline decision.
-      • Badge appears only when state == 'busy' and JSON mtime ≤ 120s.
-        This is what eliminates the "busy: drafted mg-XXXX persists for an
-        hour after the agent went back to sleep" pain.
-      • Diagnose failure for a known-running agent → state='offline' with a
-        '(diagnose failed)' badge — explicitly drops the v3.1.0 'busy by
-        default' rule. A wedged or unreachable agent now reads as offline,
-        not busy."""
+    Hard rules:
+      • For health=healthy, the agent's self-reported JSON state field is
+        the busy/idle tiebreaker (mg-9939). State=busy iff the JSON's
+        `state` starts with 'busy:' AND its mtime is ≤ AGENT_STATUS_FRESH;
+        otherwise state=idle. (pogod's diagnose returns healthy for any
+        alive crew agent, so without the tiebreaker every alive agent
+        renders as busy — the mg-eb6e regression this fixes.)
+      • For health=stalled|exited|dead, the JSON is not consulted.
+      • Badge appears only when state == 'busy' AND JSON state has the
+        form 'busy: <label>' — bare 'busy:' yields no badge. This kills
+        the "busy: drafted mg-XXXX persists for an hour after the agent
+        went back to sleep" pain.
+      • Diagnose failure for a known-running agent → state='offline' with
+        a '(diagnose failed)' badge — explicitly drops the v3.1.0 'busy
+        by default' rule. A wedged or unreachable agent now reads as
+        offline, not busy."""
     rc, out, _ = run_pogo(['agent', 'diagnose', name, '--json'])
     if rc != 0:
         return {
@@ -580,10 +599,11 @@ def agent_state(name: str, agent_list_entry: dict,
         type set and type != 'crew'      → ('🟡', 'busy', <claimed mg-id> or None)
         otherwise (crew agent, running)  → derived from compute_agent_state(name)
 
-    For crew agents, state derives from `pogo agent diagnose` health (see
-    compute_agent_state). The badge — when present — is the agent's
-    self-reported JSON label, shown only when derived state is 'busy' AND
-    the JSON file mtime is within AGENT_STATUS_FRESH (mg-b4c0).
+    For crew agents, state derives from `pogo agent diagnose` health plus
+    a JSON-state tiebreaker on `healthy` (see compute_agent_state). The
+    badge — when present — is the agent's self-reported JSON label, shown
+    only when derived state is 'busy' AND the JSON state has the form
+    'busy: <label>' AND its mtime is within AGENT_STATUS_FRESH.
 
     Polecats and other non-crew agents are ephemeral per-task processes
     that don't write `~/.pogo/agent-status/<name>.json`, so they
