@@ -104,7 +104,8 @@ COMMAND_LIST = (
     "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
     "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)\n"
     "• `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports)\n"
-    "• `status` — global pull view (unread mail + in-flight work)\n"
+    "• `status` — work in flight, by type (Reports / Designs / Bugs / Tasks)\n"
+    "• `inbox` — pending mail, approvals, and Reports awaiting your reply\n"
     "• `agents` — list crew agents and health\n"
     "• `balance` — check whether any agent is hitting credit balance errors\n"
     "• `nudge <agent> [reason]` — wake a stalled agent\n"
@@ -973,8 +974,8 @@ def scan_pending_reports() -> list[str]:
     return out
 
 
-def get_status_summary() -> str:
-    """Global pull view: unread mail count, pending approvals, in-flight work."""
+def get_inbox_summary() -> str:
+    """Decide queue: unread mail, pending approvals, pending Reports."""
     parts = []
 
     unread = sorted(MAIL_DIR.iterdir()) if MAIL_DIR.exists() else []
@@ -1004,8 +1005,57 @@ def get_status_summary() -> str:
         for s in reports:
             parts.append(f"• {s}")
 
+    return '\n'.join(parts)
+
+
+# Order in which status sections render; empty buckets are omitted.
+STATUS_SECTION_ORDER = ('Reports', 'Designs', 'Bugs', 'Tasks', 'Other')
+
+# mg item-type → status section. Anything not listed falls into "Other".
+_TYPE_TO_SECTION = {
+    'report': 'Reports',
+    'idea':   'Designs',
+    'bug':    'Bugs',
+    'task':   'Tasks',
+}
+
+
+def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
+    """Bucket in-flight items by type. Unknown types fall into 'Other'."""
+    buckets: dict[str, list[dict]] = {s: [] for s in STATUS_SECTION_ORDER}
+    for item in items:
+        section = _TYPE_TO_SECTION.get(item.get('type'), 'Other')
+        buckets[section].append(item)
+    return buckets
+
+
+def derive_review_label(item: dict) -> str:
+    """For report items with an unread Report-ready mail in human/new/,
+    return 'review'. Otherwise return the item's mg status verbatim."""
+    status = item.get('status', '?')
+    if item.get('type') != 'report':
+        return status
+    iid = (item.get('id') or '').lower()
+    if not iid or not MAIL_DIR.exists():
+        return status
+    needle = f'subject: report ready: {iid}'
+    for p in MAIL_DIR.iterdir():
+        try:
+            for line in p.read_text().splitlines():
+                if line == '':
+                    break
+                if line.lower().startswith(needle):
+                    return 'review'
+        except Exception:
+            pass
+    return status
+
+
+def get_status_summary() -> str:
+    """In-flight work, categorized by type (Reports / Designs / Bugs / Tasks)."""
     rc, out, err = run_mg(['list', '--json'])
-    in_flight = []
+    in_flight: list[dict] = []
+    mg_error = None
     if rc == 0:
         for line in out.splitlines():
             line = line.strip()
@@ -1018,20 +1068,32 @@ def get_status_summary() -> str:
             except json.JSONDecodeError:
                 pass
     elif err:
-        parts.append(f"\n(mg list error: {err.strip()[:200]})")
+        mg_error = err.strip()[:200]
 
-    if in_flight:
-        parts.append("\n**In-flight work:**")
-        for d in in_flight:
+    buckets = categorize_in_flight(in_flight)
+
+    parts = []
+    for section in STATUS_SECTION_ORDER:
+        items = buckets[section]
+        if not items:
+            continue
+        if parts:
+            parts.append('')
+        parts.append(f"**{section}**")
+        for d in items:
             iid = d.get('id', '?')
-            status = d.get('status', '?')
+            label = derive_review_label(d)
             title = (d.get('title') or '?')[:80]
-            assignee = d.get('assignee') or '—'
-            parts.append(f"• [{iid}] {status}: {title} (→ {assignee})")
-    else:
-        parts.append("\n**In-flight work:** (none)")
+            parts.append(f"[{iid}] {label}: {title}")
 
-    return '\n'.join(parts)
+    if not parts:
+        out_str = "No work in flight."
+    else:
+        out_str = '\n'.join(parts)
+
+    if mg_error:
+        out_str = out_str + f"\n\n(mg list error: {mg_error})"
+    return out_str
 
 
 def handle_command(text: str) -> str:
@@ -1389,6 +1451,12 @@ def handle_command(text: str) -> str:
             return usage
         save_preapproval({'enabled': False, 'fast': False})
         return "✓ pre-approval: disabled."
+
+    if low == 'inbox' or low.startswith('inbox '):
+        summary = get_inbox_summary()
+        if len(summary) > STATUS_OUTPUT_BUDGET:
+            summary = summary[:STATUS_OUTPUT_BUDGET] + '\n…(truncated)'
+        return summary
 
     if low == 'status' or low.startswith('status'):
         summary = get_status_summary()

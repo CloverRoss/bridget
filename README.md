@@ -133,7 +133,8 @@ director-side configuration only).
 - `mail <subject>\n<body>` — send a mail to the configured recipient (default `mayor`; override via `POGO_MAIL_RECIPIENT`). Without a newline, the whole text becomes the subject.
 - `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read. *Actionable mails — design approvals and Reports — are preserved; clear them via `approve` / `reject` / `revise` / `explain` instead.*
 - `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports — see [Pending reports & actionable mail](#pending-reports--actionable-mail)).
-- `status` — global pull view (unread mail + in-flight work).
+- `status` — work in flight, categorized by type (Reports / Designs / Bugs / Tasks). Reports awaiting your reply are labeled `review` (derived from a matching unread `Report ready: …` mail in `human/new/` — it isn't a tag on the item).
+- `inbox` — the decide queue: unread mail, pending approvals, and pending Reports awaiting your reply.
 - `agents` — list crew agents with a 4-state busy/idle indicator. Each row leads with a colored-circle emoji and state word: 🟢 **idle** (diagnose health `idle` — quiet but within the per-agent stall threshold), 🟡 **busy** (diagnose health `healthy` — recently active output), 🔴 **stalled** (diagnose health `stalled` or `dead`), or ⚪ **offline** (process not running, diagnose health `exited`, or the diagnose call itself failed). State is derived from `pogo agent diagnose <name> --json` — pogod is the authority on whether an agent is currently working. Busy rows may append a self-reported label as a trailing badge: bridget reads the optional `state` field (e.g. `"busy: drafting mg-XXXX"`) from `~/.pogo/agent-status/<name>.json`, but only renders it when the derived state is busy AND the JSON file mtime is within the last 2 minutes — older self-reports are dropped, so a stale "drafted" label can't linger after the agent has gone back to its idle wait. Self-reported JSON is therefore advisory only; if it's missing, malformed, or out of date the row still renders correctly from diagnose. Non-crew agents (e.g. polecats) are ephemeral per-task processes; they short-circuit to 🟡 **busy** while running, badged with their claimed mg-id when available.
 - `balance` — check whether any agent is hitting credit balance errors.
 - `nudge <agent> [reason]` — wake a stalled agent.
@@ -145,9 +146,34 @@ director-side configuration only).
 bridget only acts on DMs from the user whose ID is in `DISCORD_USER_ID`;
 messages from anyone else are ignored.
 
+## Inbox vs status
+
+bridget splits the global pull view into two commands so "things I
+need to read or decide" don't get mixed with "work the system is
+currently doing":
+
+- `inbox` — the decide queue. Unread mail count + listing, plus
+  separate **Pending approvals** and **Pending reports** blocks
+  (see [Pending reports & actionable mail](#pending-reports--actionable-mail)).
+- `status` — work in flight, categorized into **Reports**,
+  **Designs**, **Bugs**, **Tasks** (and a defensive **Other** bucket
+  for unknown types). Only items with status `available` / `claimed`
+  / `pending` appear; archived and shelved items are excluded.
+  Empty sections are omitted entirely — when nothing is in flight,
+  status returns `No work in flight.`
+
+Inside the **Reports** section, an item may render with the derived
+label `review` instead of its mg status. That label means "there's
+an unread `Report ready: <id>` mail in `human/new/` awaiting your
+`approve` / `reject` / `revise` / `explain` reply." It is **not** a
+tag on the item — it disappears the moment you act on the matching
+mail. Dismissing the mail is blocked for actionable subjects (see
+below), so the only way to clear the `review` state is the matching
+action verb.
+
 ## Pending reports & actionable mail
 
-`status` lists two separate blocks for mail that needs an explicit
+`inbox` lists two separate blocks for mail that needs an explicit
 decision:
 
 - **Pending approvals** — architect mails with `Subject: approval

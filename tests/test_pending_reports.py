@@ -260,28 +260,29 @@ def test_handle_command_revise_dr_clears_report_mail(bridget, monkeypatch):
     assert not (bridget.MAIL_DIR / '01.eml').exists()
 
 
-# -- status view renders the Pending reports block --------------------------
+# -- inbox view renders the Pending reports block --------------------------
+# (mg-91de split: mail / approvals / Reports moved from `status` to `inbox`.)
 
-def test_status_includes_pending_reports_block(bridget, monkeypatch):
+def test_inbox_includes_pending_reports_block(bridget, monkeypatch):
     _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: dr-aaaa')
     monkeypatch.setattr(bridget, 'run_mg', lambda args: (0, '', ''))
-    summary = bridget.get_status_summary()
+    summary = bridget.get_inbox_summary()
     assert 'Pending reports:' in summary
     assert 'Report ready: dr-aaaa' in summary
 
 
-def test_status_omits_reports_block_when_none(bridget, monkeypatch):
+def test_inbox_omits_reports_block_when_none(bridget, monkeypatch):
     _write_mail(bridget.MAIL_DIR, '01.eml', 'random update')
     monkeypatch.setattr(bridget, 'run_mg', lambda args: (0, '', ''))
-    summary = bridget.get_status_summary()
+    summary = bridget.get_inbox_summary()
     assert 'Pending reports:' not in summary
 
 
-def test_status_shows_approvals_and_reports_both(bridget, monkeypatch):
+def test_inbox_shows_approvals_and_reports_both(bridget, monkeypatch):
     _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-1111')
     _write_mail(bridget.MAIL_DIR, '02.eml', 'Report ready: dr-2222')
     monkeypatch.setattr(bridget, 'run_mg', lambda args: (0, '', ''))
-    summary = bridget.get_status_summary()
+    summary = bridget.get_inbox_summary()
     assert 'Pending approvals:' in summary
     assert 'Pending reports:' in summary
     # Each is its own block — the reports block appears after the approvals one.

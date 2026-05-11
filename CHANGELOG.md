@@ -5,6 +5,31 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.2.0] - 2026-05-11
+
+### Added
+
+- New `inbox` command — the decide queue. Shows unread mail count +
+  listing, pending approvals, and pending Reports awaiting your
+  reply. Refactored out of the old kitchen-sink `status` view.
+  (mg-3996 / mg-91de)
+
+### Changed
+
+- `status` now shows work in flight categorized by type, with
+  fixed-order sections: **Reports**, **Designs**, **Bugs**,
+  **Tasks**, and a defensive **Other** bucket for unknown types.
+  Empty sections are omitted; if nothing is in flight, status
+  returns `No work in flight.` Items render as `[<id>] <label>:
+  <title>` with no leading bullet and title truncated to 80 chars.
+  Items with status outside `available` / `claimed` / `pending`
+  (archived, shelved, done) are excluded. Mail / approvals /
+  Reports content moved to `inbox`. Inside the Reports section,
+  items with a matching unread `Report ready: <id>` mail in
+  `human/new/` are labeled `review` — a derived label, not a tag,
+  that disappears the moment the matching mail is acted on.
+  (mg-3996 / mg-91de)
+
 ## [4.1.1] - 2026-05-11
 
 ### Fixed
