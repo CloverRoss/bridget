@@ -16,6 +16,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `agents` view: state (busy/idle/stalled/offline) is now derived from
+  `pogo agent diagnose <name> --json` instead of the agent's
+  self-reported `~/.pogo/agent-status/<name>.json`. pogod's `health`
+  enum (`healthy`/`idle`/`stalled`/`exited`/`dead`) is the authority on
+  whether an agent is working; the JSON state field no longer
+  influences the badge color. Eliminates stale "busy" badges that
+  persisted after the agent returned to its idle wait. Self-reported
+  JSON is now advisory only — used for the optional busy-label badge
+  when the derived state is busy AND the JSON file mtime is within the
+  last 2 minutes (older labels are dropped). A diagnose failure for a
+  known-running agent now falls back to ⚪ offline with a faded
+  `(diagnose failed)` suffix instead of the v3.1.0 "busy by default"
+  rule. (mg-b4c0 / mg-eb6e)
 - `dismiss` and `dismiss all` no longer clear actionable mails — both
   `approval needed …` (design approvals) and `Report ready: …` (director
   Reports) now require the matching `approve` / `reject` / `revise` /

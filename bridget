@@ -43,6 +43,28 @@ IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
 MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 AGENT_STATUS_DIR = HOME / '.pogo' / 'agent-status'
 AGENT_STATUS_STALE = datetime.timedelta(minutes=30)
+# Mtime guard for the optional self-reported badge label. Past this window the
+# JSON is treated as stale and the badge is dropped — derived state still
+# renders, just without the trailing label.
+AGENT_STATUS_FRESH = datetime.timedelta(seconds=120)
+
+# Maps `pogo agent diagnose --json` health → bridget agents-view state.
+# Authoritative as of mg-b4c0; the agent's self-reported JSON state field
+# never influences this decision.
+HEALTH_TO_STATE = {
+    'healthy': 'busy',     # recently active output
+    'idle':    'idle',     # quiet but within stall threshold
+    'stalled': 'stalled',  # quiet longer than the per-agent threshold
+    'exited':  'offline',  # process has exited cleanly
+    'dead':    'stalled',  # registered as running but OS proc gone — wedge
+}
+
+STATE_EMOJI = {
+    'busy':    '🟡',
+    'idle':    '🟢',
+    'stalled': '🔴',
+    'offline': '⚪',
+}
 INSTALL_DOCS_URL = 'https://github.com/CloverRoss/bridget#readme'
 BRIDGET_REPO = Path(os.environ.get(
     'BRIDGET_REPO_DIR',
@@ -408,29 +430,6 @@ def _parse_iso_utc(ts: str) -> datetime.datetime:
     return datetime.datetime.fromisoformat(ts).astimezone(datetime.timezone.utc)
 
 
-def _safe_load_status_json(name: str) -> dict | None:
-    """Read ~/.pogo/agent-status/<name>.json. Returns None if the file is
-    missing, malformed, or its updated_at is older than AGENT_STATUS_STALE.
-    Otherwise returns the parsed dict."""
-    path = AGENT_STATUS_DIR / f'{name}.json'
-    try:
-        data = json.loads(path.read_text())
-    except FileNotFoundError:
-        return None
-    except Exception:
-        return None
-    updated_at = data.get('updated_at')
-    if not updated_at:
-        return None
-    try:
-        updated = _parse_iso_utc(updated_at)
-    except Exception:
-        return None
-    if datetime.datetime.now(datetime.timezone.utc) - updated > AGENT_STATUS_STALE:
-        return None
-    return data
-
-
 def fetch_mg_claims_by_assignee() -> dict[str, list[str]]:
     """Return {assignee_name: [mg_id, ...]} for items currently in 'claimed'
     status. One shellout per agents-command invocation. Errors return {}
@@ -455,60 +454,152 @@ def fetch_mg_claims_by_assignee() -> dict[str, list[str]]:
     return by_assignee
 
 
-def agent_state(name: str, agent_list_entry: dict, diag: dict,
-                status_json: dict | None,
+def _read_fresh_status_label(name: str) -> str | None:
+    """Return the agent's self-reported badge label from
+    ~/.pogo/agent-status/<name>.json, IFF the file's mtime is within
+    AGENT_STATUS_FRESH (2 minutes by default).
+
+    This is intentionally only the *label* part — if the file says
+    `"state": "busy: drafting mg-XXXX"` we return `"drafting mg-XXXX"`. A
+    bare `"busy"` (no colon) and any non-busy / missing / malformed value
+    yield None — the caller already knows the derived state, so the badge
+    is for the human-readable detail, not for re-asserting "busy"."""
+    path = AGENT_STATUS_DIR / f'{name}.json'
+    try:
+        st = path.stat()
+    except FileNotFoundError:
+        return None
+    except OSError:
+        return None
+    age = datetime.datetime.now(datetime.timezone.utc).timestamp() - st.st_mtime
+    if age > AGENT_STATUS_FRESH.total_seconds():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except Exception:
+        return None
+    raw = data.get('state')
+    if not isinstance(raw, str):
+        return None
+    if raw.startswith('busy:'):
+        label = raw.split(':', 1)[1].strip()
+        return label or None
+    return None
+
+
+def _state_from_diag(name: str, diag: dict) -> dict:
+    """Convert a parsed diagnose dict into the compute_agent_state result.
+
+    Split out from compute_agent_state so tests can exercise the mapping
+    without mocking subprocess calls."""
+    health = (diag.get('health') or '').lower()
+    idle_duration = diag.get('idle_duration') or '?'
+    state = HEALTH_TO_STATE.get(health)
+    if state is None:
+        print(
+            f'bridget: unknown diagnose health {health!r} for agent {name!r}; '
+            f'treating as stalled',
+            file=sys.stderr,
+        )
+        return {
+            'state': 'stalled',
+            'health_raw': health,
+            'badge': None,
+            'idle_duration': idle_duration,
+        }
+    badge = _read_fresh_status_label(name) if state == 'busy' else None
+    return {
+        'state': state,
+        'health_raw': health,
+        'badge': badge,
+        'idle_duration': idle_duration,
+    }
+
+
+def compute_agent_state(name: str) -> dict:
+    """Derive an agent's state from `pogo agent diagnose <name> --json`.
+
+    Returns a dict:
+        {
+          'state':         'busy' | 'idle' | 'stalled' | 'offline',
+          'health_raw':    raw pogo diagnose health string (or '' on error),
+          'badge':         self-reported label from
+                           ~/.pogo/agent-status/<name>.json IFF
+                           state == 'busy' AND the JSON mtime ≤
+                           AGENT_STATUS_FRESH (2 min); else None.
+                           A diagnose-failure also borrows this slot for a
+                           faded '(diagnose failed)' suffix.
+          'idle_duration': human-readable duration from diagnose (or '?').
+        }
+
+    Hard rules per mg-b4c0:
+      • State derives from diagnose `health` only — the JSON `state` field
+        MUST NOT influence the busy/idle/stalled/offline decision.
+      • Badge appears only when state == 'busy' and JSON mtime ≤ 120s.
+        This is what eliminates the "busy: drafted mg-XXXX persists for an
+        hour after the agent went back to sleep" pain.
+      • Diagnose failure for a known-running agent → state='offline' with a
+        '(diagnose failed)' badge — explicitly drops the v3.1.0 'busy by
+        default' rule. A wedged or unreachable agent now reads as offline,
+        not busy."""
+    rc, out, _ = run_pogo(['agent', 'diagnose', name, '--json'])
+    if rc != 0:
+        return {
+            'state': 'offline',
+            'health_raw': '',
+            'badge': '(diagnose failed)',
+            'idle_duration': '?',
+        }
+    try:
+        diag = json.loads(out)
+    except json.JSONDecodeError as e:
+        print(
+            f'bridget: diagnose JSON parse error for agent {name!r}: {e}',
+            file=sys.stderr,
+        )
+        return {
+            'state': 'stalled',
+            'health_raw': '',
+            'badge': None,
+            'idle_duration': '?',
+        }
+    return _state_from_diag(name, diag)
+
+
+def agent_state(name: str, agent_list_entry: dict,
                 mg_claims: dict[str, list[str]]) -> tuple[str, str, str | None]:
-    """Return (emoji, label, badge) for one crew agent row.
+    """Return (emoji, label, badge) for one agent row.
 
     emoji  ∈ {'🟢', '🟡', '🔴', '⚪'}
     label  ∈ {'idle', 'busy', 'stalled', 'offline'}
-    badge  optional trailing string (mg-id or self-report label) or None.
+    badge  optional trailing string (mg-id, self-report label, or a faded
+           '(diagnose failed)' suffix) or None.
 
     Decision tree (priority order):
-        process != 'running'                       -> ('⚪', 'offline', None)
-        type and type != 'crew' [process running]  -> ('🟡', 'busy', <claimed mg-id> or None)
-        status_json is None [process running]      -> ('🔴', 'stalled', 'stale heartbeat')
-        diag.health != 'healthy'                   -> ('🔴', 'stalled', 'unhealthy')
-        state == 'idle'                            -> ('🟢', 'idle', None)
-        state startswith 'busy'                    -> ('🟡', 'busy', <self-report label> or None)
-        no state field, name in mg_claims          -> ('🟡', 'busy', '<mg-id>')
-        no state field, no claim                   -> ('🟡', 'busy', None)
+        process != 'running'             → ('⚪', 'offline', None)
+        type set and type != 'crew'      → ('🟡', 'busy', <claimed mg-id> or None)
+        otherwise (crew agent, running)  → derived from compute_agent_state(name)
 
-    The optional 'state' field in ~/.pogo/agent-status/<name>.json is the
-    agent's self-report of {'idle' | 'busy' | 'busy: <short label>'}. When
-    absent, the renderer defaults to 🟡 busy — idle is asserted only via
-    explicit self-report (the 'don't assume idle' rule).
+    For crew agents, state derives from `pogo agent diagnose` health (see
+    compute_agent_state). The badge — when present — is the agent's
+    self-reported JSON label, shown only when derived state is 'busy' AND
+    the JSON file mtime is within AGENT_STATUS_FRESH (mg-b4c0).
 
-    `mg_claims` is the dict-of-lists returned by fetch_mg_claims_by_assignee()
-    so the badge for the no-state case can be the actual mg-id rather than a
-    placeholder."""
+    Polecats and other non-crew agents are ephemeral per-task processes
+    that don't write `~/.pogo/agent-status/<name>.json`, so they
+    short-circuit to 🟡 busy with the claimed mg-id as a badge. (Their
+    per-task state is already tracked by the mg work-item status.)"""
     process = (agent_list_entry.get('status') or '').lower()
     if process != 'running':
         return ('⚪', 'offline', None)
     agent_type = (agent_list_entry.get('type') or '').lower()
     if agent_type and agent_type != 'crew':
-        # Polecats and other non-crew agents are ephemeral per-task
-        # processes; they don't write status JSONs. If they're
-        # running, they're busy by definition.
         claims = mg_claims.get(name) or []
         badge = claims[0] if claims else None
         return ('🟡', 'busy', badge)
-    if status_json is None:
-        return ('🔴', 'stalled', 'stale heartbeat')
-    if diag.get('health') != 'healthy':
-        return ('🔴', 'stalled', 'unhealthy')
-    state = status_json.get('state')
-    if state == 'idle':
-        return ('🟢', 'idle', None)
-    if isinstance(state, str) and state.startswith('busy'):
-        if ':' in state:
-            label = state.split(':', 1)[1].strip()
-            return ('🟡', 'busy', label or None)
-        return ('🟡', 'busy', None)
-    claims = mg_claims.get(name) or []
-    if claims:
-        return ('🟡', 'busy', claims[0])
-    return ('🟡', 'busy', None)
+    derived = compute_agent_state(name)
+    state = derived['state']
+    return (STATE_EMOJI[state], state, derived['badge'])
 
 
 def agent_cycle_paren(name: str) -> str:
@@ -1056,15 +1147,7 @@ def handle_command(text: str) -> str:
         claims_by_assignee = fetch_mg_claims_by_assignee()
         for a in agents_list:
             name = a.get('name', '?')
-            rc2, dout, _ = run_pogo(['agent', 'diagnose', name, '--json'])
-            diag = {}
-            if rc2 == 0:
-                try:
-                    diag = json.loads(dout)
-                except json.JSONDecodeError:
-                    pass
-            sj = _safe_load_status_json(name)
-            emoji, label, badge = agent_state(name, a, diag, sj, claims_by_assignee)
+            emoji, label, badge = agent_state(name, a, claims_by_assignee)
             cycle = agent_cycle_paren(name) if label != 'offline' else ''
             badge_str = f' — {badge}' if badge else ''
             lines.append(
