@@ -5,6 +5,15 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.11.0] - 2026-05-11
+
+### Changed
+
+- Status view collapses Project children (`parent-project:mg-XXXX` tag)
+  under their parent Project entry. Children no longer render as
+  separate items in Designs/Tasks/Bugs sections; instead the Project
+  entry shows a count + status breakdown summary line. (mg-313f)
+
 ## [4.10.0] - 2026-05-11
 
 ### Removed
