@@ -5,6 +5,18 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.4.0] - 2026-05-11
+
+### Changed
+
+- `bug: [critical]` now routes to mayor instead of architect,
+  eliminating the architect-mayor handoff round-trip. Filing a
+  critical bug from Discord lands directly in mayor's inbox so a
+  polecat can be dispatched without architect's design pass.
+  Architect's existing mg-fb17 defensive shelve-and-mail-mayor
+  rule remains for any critical bug that arrives via other
+  routes. (mg-64b1)
+
 ## [4.3.0] - 2026-05-11
 
 ### Added

@@ -103,7 +103,7 @@ COMMAND_LIST = (
     "• `kickoff mg-XXXX` (or `dr-XXXX`) — ask mayor to start the project-kickoff workflow for this id\n"
     "• `read mg-XXXX` (or `dr-XXXX`) — show the design doc (or fall back to the latest mail if no design exists)\n"
     "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
-    "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` (when supported by architect) for crash-class bugs that should skip architect's design phase. (existing software is broken — not a new feature.)\n"
+    "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` for crash-class bugs that should skip architect's design phase — routes directly to mayor. (existing software is broken — not a new feature.)\n"
     "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
     "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)\n"
     "• `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports)\n"
@@ -1523,19 +1523,25 @@ def handle_command(text: str) -> str | list[str]:
             body = m.group(2).strip()
         if not body:
             return "Usage: `bug: [optional-tag] [optional-tag] ... <description>`"
+        is_critical = any(t.lower() == 'critical' for t in extra_tags)
+        assignee = 'mayor' if is_critical else 'architect'
         title = body.splitlines()[0][:60]
         args = [
             'new', '--type=bug',
             f'--title={title}',
             f'--body={body}',
-            '--assignee=architect',
+            f'--assignee={assignee}',
             '--tag=pogo-inbox',
             f'--repo={INBOX_REPO}',
         ]
         for t in extra_tags:
             args.append(f'--tag={t}')
         rc, out, err = run_mg(args)
-        return f"✓ bug filed:\n```\n{out.strip()}\n```" if rc == 0 else f"✗ failed: {err or out}"
+        if rc != 0:
+            return f"✗ failed: {err or out}"
+        if is_critical:
+            return f"✓ critical bug filed (routed to mayor):\n```\n{out.strip()}\n```"
+        return f"✓ bug filed:\n```\n{out.strip()}\n```"
 
     if low == 'quiet' or low.startswith('quiet '):
         rest = text.split()[1:]
