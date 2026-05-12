@@ -41,6 +41,10 @@ PREAPPROVAL_FILE = HOME / '.pogo' / 'preapproval.json'
 TASK_STATES_FILE = HOME / '.pogo' / 'bridget.task-states.json'
 IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
 MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
+# Guard against duplicate watcher spawn when Discord re-fires on_ready
+# on gateway reconnect (e.g., after laptop sleep). The watchers themselves
+# survive reconnects; only the spawn step needs guarding (mg-f7c5).
+_watchers_started = False
 DESIGNS_DIR = HOME / 'Library' / 'Mobile Documents' / 'com~apple~CloudDocs' / 'Pogo' / 'designs'
 AGENT_STATUS_DIR = HOME / '.pogo' / 'agent-status'
 AGENT_STATUS_STALE = datetime.timedelta(minutes=30)
@@ -1763,7 +1767,11 @@ def handle_command(text: str) -> str | list[str]:
 
 @client.event
 async def on_ready():
+    global _watchers_started
     print(f"logged in as {client.user} (id={client.user.id})", flush=True)
+    if _watchers_started:
+        print("on_ready re-fired (reconnect); watchers already running", flush=True)
+        return
     try:
         user = await client.fetch_user(USER_ID)
     except discord.NotFound:
@@ -1773,6 +1781,7 @@ async def on_ready():
     client.loop.create_task(watch_mailbox(user))
     client.loop.create_task(watch_task_transitions(user))
     client.loop.create_task(watch_idea_claims(user))
+    _watchers_started = True
 
 
 @client.event

@@ -5,6 +5,15 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.16.0] - 2026-05-12
+
+### Fixed
+
+- Bridge no longer spawns watcher tasks on every Discord reconnect.
+  Previously, each reconnect (e.g., after laptop sleep) added 3 new
+  watcher loops, causing N× duplicate DMs of agent mails after N
+  wakes. (mg-f7c5)
+
 ## [4.15.0] - 2026-05-12
 
 ### Changed
