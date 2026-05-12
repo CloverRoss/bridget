@@ -5,6 +5,18 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.19.0] - 2026-05-12
+
+### Changed
+
+- Status view hides Type=idea items with Project-lifecycle
+  tags that aren't actively running. Recognizes both
+  `in-progress` (canonical 5-state vocab) and `kickoff-done`
+  (current mayor flow) as in-progress signals. Other Project
+  states (`scheduled`, `handed-off-to-mayor`, `staged`, etc.)
+  are hidden from the status view entirely — they live on
+  the Product Roadmap. (mg-4955)
+
 ## [4.18.0] - 2026-05-12
 
 ### Changed

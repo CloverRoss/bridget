@@ -1187,6 +1187,22 @@ def get_inbox_summary() -> str:
 # Order in which status sections render; empty buckets are omitted.
 STATUS_SECTION_ORDER = ('Projects', 'Reports', 'Designs', 'Bugs', 'Tasks', 'Other')
 
+# Tags that mark a Type=idea as a Project in any lifecycle state. Items
+# with any of these tags are Project-roots, not ordinary designs.
+_PROJECT_TAGS = frozenset({
+    # canonical 5-state vocab (target end-state)
+    'scheduled', 'ready-for-kickoff', 'in-progress',
+    'done', 'cancelled',
+    # current mayor-flow lifecycle tags
+    'kickoff-pending', 'kickoff-done', 'roadmap-drafted',
+    'handed-off-to-mayor', 'staged',
+})
+
+# Tags that mark a Project as actually running right now. Accept both
+# canonical 'in-progress' and mayor's current 'kickoff-done' until the
+# director-rewrite cascade standardizes on 'in-progress'.
+_IN_PROGRESS_TAGS = frozenset({'in-progress', 'kickoff-done'})
+
 # mg item-type → status section. Anything not listed falls into "Other".
 _TYPE_TO_SECTION = {
     'report': 'Reports',
@@ -1198,22 +1214,25 @@ _TYPE_TO_SECTION = {
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
-    Type=idea items tagged 'in-progress' bucket into 'Projects' instead of
-    'Designs' so the currently-running Project stays visible. Other Project
-    lifecycle states (scheduled, done, cancelled, etc.) fall through to
-    Designs — they're not in flight and live on the Product Roadmap.
+    Type=idea items with any _PROJECT_TAGS tag are Project-roots. If
+    they also carry an _IN_PROGRESS_TAGS tag they bucket into 'Projects';
+    otherwise they're hidden entirely — they're not in flight and live
+    on the Product Roadmap, not the status view.
 
     Type=report items tagged 'approved' are filtered out — they've been
     scheduled into a Project, and the Project entry takes over visibility.
     """
     buckets: dict[str, list[dict]] = {s: [] for s in STATUS_SECTION_ORDER}
     for item in items:
-        if item.get('type') == 'report' and 'approved' in (item.get('tags') or []):
+        tags = set(item.get('tags') or [])
+        item_type = item.get('type')
+        if item_type == 'report' and 'approved' in tags:
             continue
-        if item.get('type') == 'idea' and 'in-progress' in (item.get('tags') or []):
-            section = 'Projects'
-        else:
-            section = _TYPE_TO_SECTION.get(item.get('type'), 'Other')
+        if item_type == 'idea' and _PROJECT_TAGS & tags:
+            if _IN_PROGRESS_TAGS & tags:
+                buckets['Projects'].append(item)
+            continue  # Project but not in-flight: lives on Product Roadmap
+        section = _TYPE_TO_SECTION.get(item_type, 'Other')
         buckets[section].append(item)
     return buckets
 
