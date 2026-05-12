@@ -1197,6 +1197,7 @@ _PROJECT_TAGS = frozenset({
     'kickoff-pending', 'kickoff-done', 'roadmap-drafted',
     'in-progress', 'scheduled', 'ready-for-kickoff',
     'done', 'cancelled',
+    'handed-off-to-mayor', 'staged',
 })
 
 # Tag that marks an item as a child of a Project (mayor-applied per mg-5c5f).
@@ -1322,6 +1323,22 @@ def get_status_summary() -> str:
                         f"  └ {len(children)} children: "
                         f"{_summarize_children(children)}"
                     )
+                    awaiting = [
+                        c for c in children
+                        if 'awaiting-approval' in (c.get('tags') or [])
+                    ]
+                    if awaiting:
+                        noun = 'child' if len(awaiting) == 1 else 'children'
+                        parts.append(
+                            f"  ⚠ {len(awaiting)} {noun} "
+                            f"awaiting your approval:"
+                        )
+                        for c in awaiting:
+                            cid = c.get('id', '?')
+                            ctitle = (c.get('title') or '?')[:80]
+                            parts.append(
+                                f"    [{cid}] awaiting-approval: {ctitle}"
+                            )
 
     if not parts:
         out_str = "No work in flight."

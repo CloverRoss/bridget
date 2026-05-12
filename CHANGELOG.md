@@ -5,6 +5,17 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.15.0] - 2026-05-12
+
+### Changed
+
+- Status view surfaces children with `awaiting-approval` tag as a
+  flagged sub-list under their Project parent (in addition to the
+  aggregate count). Also extends `_PROJECT_TAGS` with
+  `handed-off-to-mayor` + `staged` so director/mayor
+  hand-off-stage items correctly bucket as Projects, not Designs.
+  (mg-1ef2)
+
 ## [4.14.0] - 2026-05-12
 
 ### Changed
