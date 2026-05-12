@@ -5,6 +5,19 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.20.0] - 2026-05-12
+
+### Fixed
+
+- `scan_pending_reports` filters out items whose underlying
+  mg work item is shelved / done / archived. Stale
+  Report-ready mails for closed items no longer pollute
+  inbox view. Same filter is applied to
+  `scan_pending_approvals` for approval-needed mails whose
+  item has since been shelved. Defensive: any `mg show`
+  failure falls through and surfaces the mail anyway
+  (false positive preferable to false negative). (mg-403e)
+
 ## [4.19.0] - 2026-05-12
 
 ### Changed

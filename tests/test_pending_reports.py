@@ -307,5 +307,141 @@ def test_protected_subject_prefixes_constant(bridget):
     assert 'approval needed' in bridget.PROTECTED_SUBJECT_PREFIXES
 
 
+# -- mg-status filtering for scan_pending_reports (mg-403e) -----------------
+
+def _fake_mg_status(status_by_id, rc_by_id=None):
+    """Build a run_mg replacement that answers `show` from a status table.
+
+    `status_by_id`: maps mg-id → status string returned in the Status: line.
+    `rc_by_id`: optional override of rc for specific ids (default 0).
+    """
+    rc_by_id = rc_by_id or {}
+
+    def fake(args):
+        if args[:1] == ['show'] and len(args) >= 2:
+            mid = args[1]
+            rc = rc_by_id.get(mid, 0)
+            if rc != 0:
+                return rc, '', 'not found'
+            status = status_by_id.get(mid, 'available')
+            return 0, f'ID:        {mid}\nType:      bug\nStatus:    {status}\n', ''
+        return 0, '', ''
+
+    return fake
+
+
+def test_scan_pending_reports_skips_shelved_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-5266')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-5266': 'shelved'}),
+    )
+    assert bridget.scan_pending_reports() == []
+
+
+def test_scan_pending_reports_skips_done_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-aaaa')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-aaaa': 'done'}),
+    )
+    assert bridget.scan_pending_reports() == []
+
+
+def test_scan_pending_reports_skips_archived_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-bbbb')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-bbbb': 'archived'}),
+    )
+    assert bridget.scan_pending_reports() == []
+
+
+def test_scan_pending_reports_surfaces_available_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-cccc')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-cccc': 'available'}),
+    )
+    assert bridget.scan_pending_reports() == ['Report ready: mg-cccc']
+
+
+def test_scan_pending_reports_surfaces_claimed_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-dddd')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-dddd': 'claimed'}),
+    )
+    assert bridget.scan_pending_reports() == ['Report ready: mg-dddd']
+
+
+def test_scan_pending_reports_defensive_on_mg_show_failure(bridget, monkeypatch):
+    # rc != 0 → fall through and surface (false positive > false negative).
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-eeee')
+    monkeypatch.setattr(
+        bridget, 'run_mg',
+        _fake_mg_status({}, rc_by_id={'mg-eeee': 1}),
+    )
+    assert bridget.scan_pending_reports() == ['Report ready: mg-eeee']
+
+
+def test_scan_pending_reports_defensive_on_missing_status_line(bridget, monkeypatch):
+    # rc == 0 but no Status: line → fall through and surface.
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-ffff')
+    monkeypatch.setattr(bridget, 'run_mg', lambda args: (0, 'garbage output\n', ''))
+    assert bridget.scan_pending_reports() == ['Report ready: mg-ffff']
+
+
+def test_scan_pending_reports_subject_without_mg_id_passes_through(bridget, monkeypatch):
+    # The original dr-XXXX subjects don't match the mg-id regex; no status
+    # check applies, mail still surfaces.
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: dr-abcd')
+    called = []
+
+    def fake(args):
+        called.append(args)
+        return 0, '', ''
+    monkeypatch.setattr(bridget, 'run_mg', fake)
+    assert bridget.scan_pending_reports() == ['Report ready: dr-abcd']
+    # And we didn't even bother spawning mg show for a non-mg subject.
+    assert called == []
+
+
+def test_scan_pending_reports_mixed_shelved_and_available(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: mg-1111')  # shelved
+    _write_mail(bridget.MAIL_DIR, '02.eml', 'Report ready: mg-2222')  # available
+    _write_mail(bridget.MAIL_DIR, '03.eml', 'Report ready: dr-3333')  # no mg-id
+    monkeypatch.setattr(
+        bridget, 'run_mg',
+        _fake_mg_status({'mg-1111': 'shelved', 'mg-2222': 'available'}),
+    )
+    assert bridget.scan_pending_reports() == [
+        'Report ready: mg-2222',
+        'Report ready: dr-3333',
+    ]
+
+
+# -- mg-status filtering for scan_pending_approvals (mg-403e) ---------------
+
+def test_scan_pending_approvals_skips_shelved_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-7777')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-7777': 'shelved'}),
+    )
+    assert bridget.scan_pending_approvals() == []
+
+
+def test_scan_pending_approvals_surfaces_available_mg_item(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-8888')
+    monkeypatch.setattr(
+        bridget, 'run_mg', _fake_mg_status({'mg-8888': 'available'}),
+    )
+    assert bridget.scan_pending_approvals() == ['approval needed mg-8888']
+
+
+def test_scan_pending_approvals_defensive_on_mg_show_failure(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-9999')
+    monkeypatch.setattr(
+        bridget, 'run_mg',
+        _fake_mg_status({}, rc_by_id={'mg-9999': 1}),
+    )
+    assert bridget.scan_pending_approvals() == ['approval needed mg-9999']
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))

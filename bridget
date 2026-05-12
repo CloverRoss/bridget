@@ -1114,8 +1114,33 @@ def mark_mail_read(mg_id=None, all_unread: bool = False,
     return n
 
 
+# Statuses indicating an mg work item is no longer actionable: surfacing
+# its Report-ready / approval-needed mail in inbox would be stale noise.
+_CLOSED_MG_STATUSES = frozenset({'shelved', 'done', 'archived'})
+
+
+def _mg_item_closed(mg_id: str) -> bool:
+    """True iff `mg show mg_id` reports a closed status (shelved/done/archived).
+
+    Defensive: any failure (rc!=0, no Status: line, unexpected output) returns
+    False so the caller surfaces the mail — false positive is preferable to
+    false negative for inbox visibility.
+    """
+    rc, out, _ = run_mg(['show', mg_id])
+    if rc != 0:
+        return False
+    m = re.search(r'^Status:\s+(\S+)', out, re.MULTILINE)
+    if not m:
+        return False
+    return m.group(1) in _CLOSED_MG_STATUSES
+
+
 def scan_pending_approvals() -> list[str]:
-    """Subjects of unread mails in human/new/ that are approval requests."""
+    """Subjects of unread mails in human/new/ that are approval requests.
+
+    Skips mails whose mg-id is shelved/done/archived — those approvals are
+    no longer actionable (item was routed elsewhere before human acted).
+    """
     if not MAIL_DIR.exists():
         return []
     out = []
@@ -1125,7 +1150,11 @@ def scan_pending_approvals() -> list[str]:
                 if line == '':
                     break
                 if line.startswith('Subject: approval needed '):
-                    out.append(line[len('Subject: '):])
+                    subj = line[len('Subject: '):]
+                    m = re.search(r'mg-[0-9a-f]+', subj)
+                    if m and _mg_item_closed(m.group(0)):
+                        break
+                    out.append(subj)
                     break
         except Exception:
             pass
@@ -1133,7 +1162,11 @@ def scan_pending_approvals() -> list[str]:
 
 
 def scan_pending_reports() -> list[str]:
-    """Subjects of unread mails in human/new/ that are director Reports."""
+    """Subjects of unread mails in human/new/ that are director Reports.
+
+    Skips mails whose mg-id is shelved/done/archived — those Reports are
+    stale (work item was closed before the human acted on the Report).
+    """
     if not MAIL_DIR.exists():
         return []
     out = []
@@ -1143,7 +1176,11 @@ def scan_pending_reports() -> list[str]:
                 if line == '':
                     break
                 if line.startswith('Subject: Report ready:'):
-                    out.append(line[len('Subject: '):])
+                    subj = line[len('Subject: '):]
+                    m = re.search(r'mg-[0-9a-f]+', subj)
+                    if m and _mg_item_closed(m.group(0)):
+                        break
+                    out.append(subj)
                     break
         except Exception:
             pass
