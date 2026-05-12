@@ -5,6 +5,14 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.12.0] - 2026-05-12
+
+### Fixed
+
+- help reply now packs bullets into multiple Discord messages when the
+  COMMAND_LIST exceeds the per-message budget. Last bullets (preapprove
+  etc.) no longer truncate. (mg-91d2)
+
 ## [4.11.0] - 2026-05-11
 
 ### Changed
