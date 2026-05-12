@@ -5,6 +5,17 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.17.0] - 2026-05-12
+
+### Changed
+
+- Status view reverts the children-collapse from mg-44fe per
+  mg-1ef2 revise. Children with `parent-project:` tag now appear
+  in their natural type bucket (Designs / Tasks / Bugs); the
+  Project entry stays in Projects. Approved Reports are filtered
+  from the Reports bucket — Project entry surfaces them
+  post-scheduling. (mg-1ef2 revise)
+
 ## [4.16.0] - 2026-05-12
 
 ### Fixed

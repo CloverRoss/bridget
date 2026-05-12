@@ -93,7 +93,7 @@ def test_help_status_preserves_legacy_description(bridget):
     # per-command drill-down too.
     reply = bridget.handle_command('help status')
     assert 'Projects / Reports / Designs / Bugs / Tasks' in reply
-    assert 'parent-project:mg-XXXX' in reply
+    assert 'approved Reports are hidden' in reply
 
 
 def test_help_unknown_command(bridget):

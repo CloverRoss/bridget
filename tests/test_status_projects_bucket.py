@@ -49,33 +49,31 @@ def _ndjson(items: list[dict]) -> str:
 
 def test_idea_with_kickoff_pending_buckets_into_projects(bridget):
     items = [{'id': 'mg-bbc2', 'type': 'idea', 'tags': ['kickoff-pending']}]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-bbc2']
     assert buckets['Designs'] == []
 
 
 def test_idea_with_in_progress_buckets_into_projects(bridget):
     items = [{'id': 'mg-aaaa', 'type': 'idea', 'tags': ['in-progress']}]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-aaaa']
     assert buckets['Designs'] == []
 
 
-def test_idea_with_only_parent_project_tag_is_filtered_out(bridget):
-    # Children of a Project carry parent-project:mg-XXXX. Post-mg-313f
-    # they're filtered out of buckets entirely and surfaced under the
-    # parent Project entry via children_by_parent.
+def test_idea_with_only_parent_project_tag_stays_in_designs(bridget):
+    # Post-mg-1ef2-revise: children with parent-project: tag flow into
+    # their natural bucket per type. Type=idea → Designs.
     items = [{'id': 'mg-cccc', 'type': 'idea',
               'tags': ['parent-project:mg-bbc2']}]
-    buckets, children = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []
-    assert buckets['Designs'] == []
-    assert [i['id'] for i in children['mg-bbc2']] == ['mg-cccc']
+    assert [i['id'] for i in buckets['Designs']] == ['mg-cccc']
 
 
 def test_idea_with_no_project_tags_stays_in_designs(bridget):
     items = [{'id': 'mg-dddd', 'type': 'idea', 'tags': ['bridget']}]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []
     assert [i['id'] for i in buckets['Designs']] == ['mg-dddd']
 
@@ -83,7 +81,7 @@ def test_idea_with_no_project_tags_stays_in_designs(bridget):
 def test_idea_with_no_tags_at_all_stays_in_designs(bridget):
     # Regression: tags field omitted entirely.
     items = [{'id': 'mg-eeee', 'type': 'idea'}]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []
     assert [i['id'] for i in buckets['Designs']] == ['mg-eeee']
 
@@ -91,34 +89,33 @@ def test_idea_with_no_tags_at_all_stays_in_designs(bridget):
 def test_task_with_project_tag_stays_in_tasks(bridget):
     # Tag check only fires for type=idea — non-idea types are unaffected.
     items = [{'id': 'mg-ffff', 'type': 'task', 'tags': ['in-progress']}]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []
     assert [i['id'] for i in buckets['Tasks']] == ['mg-ffff']
 
 
 def test_bug_with_project_tag_stays_in_bugs(bridget):
     items = [{'id': 'mg-gggg', 'type': 'bug', 'tags': ['kickoff-pending']}]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []
     assert [i['id'] for i in buckets['Bugs']] == ['mg-gggg']
 
 
-def test_idea_with_parent_project_and_status_tag_is_filtered_out(bridget):
-    # parent-project: tag wins over Project-status tag — a child item
-    # is still a child even if it also carries `scheduled` etc.
+def test_idea_with_parent_project_and_status_tag_buckets_into_projects(bridget):
+    # Post-mg-1ef2-revise: parent-project: tag is informational only;
+    # Project-status tag still routes the item to Projects.
     items = [{'id': 'mg-hhhh', 'type': 'idea',
               'tags': ['bridget', 'scheduled', 'parent-project:mg-bbc2']}]
-    buckets, children = bridget.categorize_in_flight(items)
-    assert buckets['Projects'] == []
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-hhhh']
     assert buckets['Designs'] == []
-    assert [i['id'] for i in children['mg-bbc2']] == ['mg-hhhh']
 
 
 def test_all_project_status_tags_route_to_projects(bridget):
     # Every tag in _PROJECT_TAGS should bucket a Type=idea into Projects.
     for tag in bridget._PROJECT_TAGS:
         items = [{'id': f'mg-{tag}', 'type': 'idea', 'tags': [tag]}]
-        buckets, _ = bridget.categorize_in_flight(items)
+        buckets = bridget.categorize_in_flight(items)
         assert [i['id'] for i in buckets['Projects']] == [f'mg-{tag}'], (
             f"tag {tag!r} did not route to Projects"
         )

@@ -152,7 +152,7 @@ COMMANDS = [
     {
         'name': 'status',
         'signature': 'status',
-        'description': 'work in flight, by type (Projects / Reports / Designs / Bugs / Tasks). Project children (tagged `parent-project:mg-XXXX`) collapse under their parent Project entry as a count + status breakdown, not as separate Designs/Tasks/Bugs rows.',
+        'description': 'work in flight, by type (Projects / Reports / Designs / Bugs / Tasks). Project children flow into their natural type bucket; approved Reports are hidden once they have been scheduled into a Project.',
     },
     {
         'name': 'inbox',
@@ -1204,64 +1204,25 @@ _PROJECT_TAGS = frozenset({
     'handed-off-to-mayor', 'staged',
 })
 
-# Tag that marks an item as a child of a Project (mayor-applied per mg-5c5f).
-# Children are filtered out of top-level buckets and collapsed under their
-# parent Project entry instead.
-_PARENT_PROJECT_RE = re.compile(r'^parent-project:(mg-[0-9a-f]+)$')
-
-
-def _extract_parent_project(tags: list[str] | None) -> str | None:
-    """Return the parent Project mg-id if `tags` carries a parent-project:
-    tag, else None."""
-    for tag in tags or ():
-        m = _PARENT_PROJECT_RE.match(tag)
-        if m:
-            return m.group(1)
-    return None
-
-
-def categorize_in_flight(
-    items: list[dict],
-) -> tuple[dict[str, list[dict]], dict[str, list[dict]]]:
+def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
     Type=idea items carrying a Project-status tag (see _PROJECT_TAGS) bucket
     into 'Projects' instead of 'Designs' so Project-roots stay visible.
 
-    Items carrying a `parent-project:mg-XXXX` tag are children of a Project
-    and are EXCLUDED from all buckets; they're returned in the second
-    element of the tuple, a dict mapping parent mg-id → list of child items,
-    so the status renderer can collapse them under their parent entry.
+    Type=report items tagged 'approved' are filtered out — they've been
+    scheduled into a Project, and the Project entry takes over visibility.
     """
     buckets: dict[str, list[dict]] = {s: [] for s in STATUS_SECTION_ORDER}
-    children_by_parent: dict[str, list[dict]] = {}
     for item in items:
-        parent = _extract_parent_project(item.get('tags'))
-        if parent:
-            children_by_parent.setdefault(parent, []).append(item)
+        if item.get('type') == 'report' and 'approved' in (item.get('tags') or []):
             continue
         if item.get('type') == 'idea' and _PROJECT_TAGS & set(item.get('tags') or []):
             section = 'Projects'
         else:
             section = _TYPE_TO_SECTION.get(item.get('type'), 'Other')
         buckets[section].append(item)
-    return buckets, children_by_parent
-
-
-def _summarize_children(items: list[dict]) -> str:
-    """Return a comma-separated count breakdown of child items by status,
-    e.g. '2 awaiting-approval, 1 in-progress polecat'. Type=task children
-    get a 'polecat' marker so the breakdown reads naturally.
-    """
-    counts: dict[str, int] = {}
-    order: list[str] = []
-    for item in items:
-        status = item.get('status') or '?'
-        label = f"{status} polecat" if item.get('type') == 'task' else status
-        if label not in counts:
-            order.append(label)
-        counts[label] = counts.get(label, 0) + 1
-    return ', '.join(f"{counts[label]} {label}" for label in order)
+    return buckets
 
 
 def derive_review_label(item: dict) -> str:
@@ -1305,7 +1266,7 @@ def get_status_summary() -> str:
     elif err:
         mg_error = err.strip()[:200]
 
-    buckets, children_by_parent = categorize_in_flight(in_flight)
+    buckets = categorize_in_flight(in_flight)
 
     parts = []
     for section in STATUS_SECTION_ORDER:
@@ -1320,29 +1281,6 @@ def get_status_summary() -> str:
             label = derive_review_label(d)
             title = (d.get('title') or '?')[:80]
             parts.append(f"[{iid}] {label}: {title}")
-            if section == 'Projects':
-                children = children_by_parent.get(iid, [])
-                if children:
-                    parts.append(
-                        f"  └ {len(children)} children: "
-                        f"{_summarize_children(children)}"
-                    )
-                    awaiting = [
-                        c for c in children
-                        if 'awaiting-approval' in (c.get('tags') or [])
-                    ]
-                    if awaiting:
-                        noun = 'child' if len(awaiting) == 1 else 'children'
-                        parts.append(
-                            f"  ⚠ {len(awaiting)} {noun} "
-                            f"awaiting your approval:"
-                        )
-                        for c in awaiting:
-                            cid = c.get('id', '?')
-                            ctitle = (c.get('title') or '?')[:80]
-                            parts.append(
-                                f"    [{cid}] awaiting-approval: {ctitle}"
-                            )
 
     if not parts:
         out_str = "No work in flight."

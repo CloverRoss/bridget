@@ -61,7 +61,7 @@ def test_categorize_buckets_each_type(bridget):
         {'id': 'mg-2', 'type': 'bug'},
         {'id': 'mg-3', 'type': 'task'},
     ]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Reports']] == ['dr-1']
     assert [i['id'] for i in buckets['Designs']] == ['mg-1']
     assert [i['id'] for i in buckets['Bugs']] == ['mg-2']
@@ -75,7 +75,7 @@ def test_categorize_unknown_type_goes_to_other(bridget):
         {'id': 'mg-x', 'type': 'spike'},
         {'id': 'mg-?'},  # no type at all
     ]
-    buckets, _ = bridget.categorize_in_flight(items)
+    buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Other']] == ['mg-q', 'mg-x', 'mg-?']
     assert buckets['Reports'] == []
     assert buckets['Designs'] == []
@@ -84,9 +84,8 @@ def test_categorize_unknown_type_goes_to_other(bridget):
 
 
 def test_categorize_empty_input(bridget):
-    buckets, children = bridget.categorize_in_flight([])
+    buckets = bridget.categorize_in_flight([])
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
-    assert children == {}
 
 
 # -- derive_review_label ----------------------------------------------------
