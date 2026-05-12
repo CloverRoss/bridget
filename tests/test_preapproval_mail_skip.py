@@ -1,19 +1,20 @@
-"""Tests for bridget's preapproval-aware mail handling in watch_mailbox (mg-bc75).
+"""Regression test: bridget always delivers approval-needed DMs (mg-a0be).
 
-When ~/.pogo/preapproval.json has {'enabled': True}, bridget should:
-  - Skip the Discord DM for any new mail whose subject starts with
-    'approval needed'.
-  - Move that mail file from human/new/ → human/cur/ so subsequent
-    `inbox` / scan calls don't keep flagging it.
-  - Append a 'preapproval-skip' entry to bridget.mail-actions.log.
-  - Add the filename to `seen`.
+Originally added in mg-bc75: when ~/.pogo/preapproval.json was enabled,
+bridge silently moved 'approval needed' mails to cur/ and skipped the DM.
 
-When preapproval is disabled, or when the subject prefix is something
-else (e.g. 'Report ready:'), the DM-and-stay-in-new flow is unchanged.
+That behavior was reverted in mg-a0be — it was masking designs with open
+questions for the user. Dedupe of auto-approvable cases is now mayor's
+responsibility (the pre-approval mail-from-human pattern). Bridge always
+delivers the DM regardless of preapproval state, and always leaves the
+mail in new/ for the human to dismiss normally.
+
+This test file keeps the original fixture scaffolding but inverts the
+assertions: preapproval=True must NOT suppress the DM, and the mail must
+NOT be auto-moved to cur/.
 """
 import asyncio
 import importlib.util
-import json
 import os
 import sys
 from importlib.machinery import SourceFileLoader
@@ -92,7 +93,8 @@ def _stub_startup(bridget_mod, monkeypatch):
     monkeypatch.setattr(bridget_mod, 'get_status_summary', lambda: 'test summary')
 
 
-def test_skip_when_preapproval_on(bridget, monkeypatch):
+def test_dm_delivered_when_preapproval_on(bridget, monkeypatch):
+    """Preapproval=on must NOT suppress an approval-needed DM (mg-a0be)."""
     bridget.save_preapproval({'enabled': True, 'fast': False})
     _stub_startup(bridget, monkeypatch)
     fname = '01.eml'
@@ -101,28 +103,24 @@ def test_skip_when_preapproval_on(bridget, monkeypatch):
     user = AsyncMock()
     _run_watch_once(bridget, user)
 
-    cur_path = bridget.MAIL_DIR.parent / 'cur' / fname
-    assert cur_path.exists(), 'approval-needed mail should move to cur/'
-    assert not (bridget.MAIL_DIR / fname).exists()
+    assert (bridget.MAIL_DIR / fname).exists(), \
+        'approval-needed mail must stay in new/ regardless of preapproval state'
+    assert not (bridget.MAIL_DIR.parent / 'cur' / fname).exists(), \
+        'bridge must not auto-move approval-needed mails'
 
-    # Build the message bridget *would* have sent for this mail and
-    # confirm it was never sent — the startup status DM is fine.
-    forbidden_fragments = ('approval needed mg-abcd1', '📬 **architect**')
-    for call in user.send.call_args_list:
-        sent = call.args[0] if call.args else ''
-        for frag in forbidden_fragments:
-            assert frag not in sent, f'unexpected DM for skipped mail: {sent!r}'
+    sent_combined = '\n'.join(
+        (call.args[0] if call.args else '') for call in user.send.call_args_list
+    )
+    assert 'approval needed mg-abcd1' in sent_combined, (
+        'expected a Discord DM for the approval-needed mail '
+        'even when preapproval is enabled'
+    )
 
     seen = bridget.load_seen()
     assert fname in seen
 
-    log_path = bridget.MAIL_ACTIONS_LOG
-    assert log_path.exists(), 'mail-actions log should record the skip'
-    actions = [json.loads(line) for line in log_path.read_text().splitlines() if line]
-    assert any(a.get('action') == 'preapproval-skip' for a in actions)
 
-
-def test_dm_when_preapproval_off(bridget, monkeypatch):
+def test_dm_delivered_when_preapproval_off(bridget, monkeypatch):
     bridget.save_preapproval({'enabled': False, 'fast': False})
     _stub_startup(bridget, monkeypatch)
     fname = '02.eml'
@@ -146,8 +144,7 @@ def test_dm_when_preapproval_off(bridget, monkeypatch):
 
 
 def test_report_ready_unaffected_when_preapproval_on(bridget, monkeypatch):
-    """Report-ready mails use a different prefix and must still be DM'd
-    even with preapproval enabled — preapproval doesn't apply to Reports."""
+    """Report-ready mails use a different prefix and must still be DM'd."""
     bridget.save_preapproval({'enabled': True, 'fast': True})
     _stub_startup(bridget, monkeypatch)
     fname = '03.eml'

@@ -765,17 +765,6 @@ async def watch_mailbox(user: discord.User):
                         print(f"parse error {fname}: {e}", file=sys.stderr)
                         seen.add(fname)
                         continue
-                    subj = mail.get('subject', '') or ''
-                    if subj.startswith('approval needed') and load_preapproval().get('enabled'):
-                        cur_dir = MAIL_DIR.parent / 'cur'
-                        cur_dir.mkdir(parents=True, exist_ok=True)
-                        try:
-                            fpath.rename(cur_dir / fname)
-                            log_mail_action('preapproval-skip', mg_id=None)
-                        except Exception as e:
-                            print(f'preapproval skip rename failed for {fname}: {e}', file=sys.stderr)
-                        seen.add(fname)
-                        continue
                     body_preview = mail['body']
                     if len(body_preview) > 1200:
                         body_preview = body_preview[:1200] + '\n…[truncated; use `read <mg-id>`]'

@@ -5,6 +5,17 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.21.0] - 2026-05-12
+
+### Reverted
+
+- Reverted mg-bc75/mg-b3e1 awaiting-approval DM suppression.
+  Bridge always delivers approval-needed Discord DMs regardless
+  of preapproval state — the suppression was masking designs
+  with open questions for the user. Dedupe of auto-approvable
+  cases is now mayor's responsibility (via the pre-approval
+  mail-from-human pattern). (mg-a0be)
+
 ## [4.20.0] - 2026-05-12
 
 ### Fixed
