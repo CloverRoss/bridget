@@ -94,26 +94,106 @@ POLL_INTERVAL = 5  # seconds
 DISCORD_MSG_LIMIT = 1900  # leave headroom under the 2000 char limit
 STATUS_OUTPUT_BUDGET = 1700
 
-COMMAND_LIST = (
-    "• `approve mg-XXXX` (or `dr-XXXX`) — approve a design (auto-clears related mails)\n"
-    "• `reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails\n"
-    "• `revise mg-XXXX <feedback>` (or `dr-XXXX`) — request changes (auto-unshelves; clears mails)\n"
-    "• `explain mg-XXXX <what>` (or `dr-XXXX`) — ask architect to elaborate without redesigning\n"
-    "• `read mg-XXXX` (or `dr-XXXX` or `m<N>` from inbox listing) — show design doc / mail. `mN` indices come from the most recent `inbox` output and may shift if new mail arrives in between. (approval/Report mails stay unread until you reply with approve/reject/revise/explain)\n"
-    "• `idea: [tag] [tag] ... <text>` — file an idea with optional scope tags (e.g. `[bridget]`)\n"
-    "• `bug: [tag] [tag] ... <text>` — file a bug with optional scope tags. Use `[critical]` for crash-class bugs that should skip architect's design phase — routes directly to mayor. (existing software is broken — not a new feature.)\n"
-    "• `mail <subject>\\n<body>` — send a mail (without a newline, the whole text becomes the subject)\n"
-    "• `dismiss mg-XXXX` (or `dr-XXXX`) — mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)\n"
-    "• `dismiss all` — inbox-zero everything except actionable mails (design approvals + Reports)\n"
-    "• `status` — work in flight, by type (Projects / Reports / Designs / Bugs / Tasks). Project children (tagged `parent-project:mg-XXXX`) collapse under their parent Project entry as a count + status breakdown, not as separate Designs/Tasks/Bugs rows.\n"
-    "• `inbox` — pending mail, approvals, and Reports awaiting your reply\n"
-    "• `agents` — list crew agents and health\n"
-    "• `nudge <agent> [reason]` — wake a stalled agent\n"
-    "• `restart` — git pull + restart bridget (after merging a PR)\n"
-    "• `quiet <true|false> [HH:MM HH:MM]` — toggle agent quiet hours (default 23:00–06:00)\n"
-    "• `preapprove [true [fast] | false]` — toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.\n"
-    "• `help` (or `?`) — this list"
+COMMANDS = [
+    {
+        'name': 'approve',
+        'signature': 'approve mg-XXXX (or dr-XXXX)',
+        'description': 'approve a design (auto-clears related mails)',
+    },
+    {
+        'name': 'reject',
+        'signature': 'reject mg-XXXX <reason> (or dr-XXXX)',
+        'description': 'shelve idea + clear mails',
+    },
+    {
+        'name': 'revise',
+        'signature': 'revise mg-XXXX <feedback> (or dr-XXXX)',
+        'description': 'request changes (auto-unshelves; clears mails)',
+    },
+    {
+        'name': 'explain',
+        'signature': 'explain mg-XXXX <what> (or dr-XXXX)',
+        'description': 'ask architect to elaborate without redesigning',
+    },
+    {
+        'name': 'read',
+        'signature': 'read mg-XXXX (or dr-XXXX or m<N> from inbox listing)',
+        'description': 'show design doc / mail. `mN` indices come from the most recent `inbox` output and may shift if new mail arrives in between. (approval/Report mails stay unread until you reply with approve/reject/revise/explain)',
+    },
+    {
+        'name': 'idea:',
+        'signature': 'idea: [tag] [tag] ... <text>',
+        'description': 'file an idea with optional scope tags (e.g. `[bridget]`)',
+    },
+    {
+        'name': 'bug:',
+        'signature': 'bug: [tag] [tag] ... <text>',
+        'description': "file a bug with optional scope tags. Use `[critical]` for crash-class bugs that should skip architect's design phase — routes directly to mayor. (existing software is broken — not a new feature.)",
+    },
+    {
+        'name': 'mail',
+        'signature': 'mail <subject>\\n<body>',
+        'description': 'send a mail (without a newline, the whole text becomes the subject)',
+    },
+    {
+        'name': 'dismiss',
+        'signature': 'dismiss mg-XXXX (or dr-XXXX)',
+        'description': 'mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)',
+    },
+    {
+        'name': 'dismiss all',
+        'signature': 'dismiss all',
+        'description': 'inbox-zero everything except actionable mails (design approvals + Reports)',
+    },
+    {
+        'name': 'status',
+        'signature': 'status',
+        'description': 'work in flight, by type (Projects / Reports / Designs / Bugs / Tasks). Project children (tagged `parent-project:mg-XXXX`) collapse under their parent Project entry as a count + status breakdown, not as separate Designs/Tasks/Bugs rows.',
+    },
+    {
+        'name': 'inbox',
+        'signature': 'inbox',
+        'description': 'pending mail, approvals, and Reports awaiting your reply',
+    },
+    {
+        'name': 'agents',
+        'signature': 'agents',
+        'description': 'list crew agents and health',
+    },
+    {
+        'name': 'nudge',
+        'signature': 'nudge <agent> [reason]',
+        'description': 'wake a stalled agent',
+    },
+    {
+        'name': 'restart',
+        'signature': 'restart',
+        'description': 'git pull + restart bridget (after merging a PR)',
+    },
+    {
+        'name': 'quiet',
+        'signature': 'quiet <true|false> [HH:MM HH:MM]',
+        'description': 'toggle agent quiet hours (default 23:00–06:00)',
+    },
+    {
+        'name': 'preapprove',
+        'signature': 'preapprove [true [fast] | false]',
+        'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
+    },
+    {
+        'name': 'help',
+        'signature': 'help [<command>]',
+        'description': '... this menu, or full details for one command',
+    },
+]
+
+# Derived constants. COMMAND_LIST is kept for back-compat with the startup
+# DM at watch_mailbox() and existing tests that grep substrings out of the
+# joined bullet form.
+COMMAND_LIST = '\n'.join(
+    f"• `{c['signature']}` — {c['description']}" for c in COMMANDS
 )
+COMMANDS_BY_NAME = {c['name']: c for c in COMMANDS}
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -895,19 +975,6 @@ def read_design_doc(mg_id: str) -> str | None:
     return FRONTMATTER_RE.sub('', text, count=1).lstrip('\n')
 
 
-def _chunk_bullet_list(text: str, limit: int = 1700) -> list[str]:
-    """Pack newline-separated bullet lines into chunks ≤ limit."""
-    lines = text.splitlines()
-    chunks: list[str] = ['']
-    for line in lines:
-        candidate = (chunks[-1] + '\n' + line).strip() if chunks[-1] else line
-        if len(candidate) <= limit:
-            chunks[-1] = candidate
-        else:
-            chunks.append(line)
-    return chunks
-
-
 def chunk_for_discord(text: str, limit: int = 1700, max_chunks: int = 3) -> list[str]:
     """Split text for Discord's per-message budget.
 
@@ -1518,9 +1585,18 @@ def handle_command(text: str) -> str | list[str]:
         return f'✗ mail failed: {(err or out).strip()[:200]}'
 
     if low in ('help', '?', 'commands'):
-        chunks = _chunk_bullet_list(COMMAND_LIST)
-        chunks[0] = '**Commands:**\n' + chunks[0]
-        return chunks if len(chunks) > 1 else chunks[0]
+        lines = ['**Commands:**']
+        for c in COMMANDS:
+            lines.append(f"• `{c['signature']}`")
+        lines.append('')
+        lines.append('Type `help <command>` for details on any one.')
+        return '\n'.join(lines)
+    if low.startswith('help '):
+        name = text.split(None, 1)[1].strip().lower()
+        c = COMMANDS_BY_NAME.get(name)
+        if not c:
+            return f"Unknown command `{name}`; type `help` for the menu."
+        return f"**`{c['signature']}`**\n\n{c['description']}"
 
     if low.startswith('idea:'):
         body = text[5:].strip()
