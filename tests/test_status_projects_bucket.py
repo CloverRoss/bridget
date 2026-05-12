@@ -1,10 +1,12 @@
-"""Tests for the Status view's dedicated Projects bucket (mg-946e).
+"""Tests for the Status view's dedicated Projects bucket (mg-946e, mg-b824).
 
-Project-roots are Type=idea items carrying a Project-status tag (e.g.
-`kickoff-pending`, `in-progress`). They get their own bucket rendered
-before Designs so they don't get drowned by ordinary architect designs.
-Children of a Project (tagged only with `parent-project:mg-XXXX`) stay
-in Designs/Tasks per their type.
+Project-roots in the Projects bucket are Type=idea items tagged
+specifically `in-progress` (mg-b824). They get their own bucket rendered
+before Designs so the in-flight Project stays visible. Other lifecycle
+states (`scheduled`, `done`, `cancelled`, `kickoff-pending`, etc.) fall
+through to Designs — they're not actively running. Children of a Project
+(tagged only with `parent-project:mg-XXXX`) stay in Designs/Tasks per
+their type.
 """
 import importlib.util
 import json
@@ -47,18 +49,44 @@ def _ndjson(items: list[dict]) -> str:
 
 # -- categorize_in_flight: Projects bucket ---------------------------------
 
-def test_idea_with_kickoff_pending_buckets_into_projects(bridget):
-    items = [{'id': 'mg-bbc2', 'type': 'idea', 'tags': ['kickoff-pending']}]
-    buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-bbc2']
-    assert buckets['Designs'] == []
-
-
 def test_idea_with_in_progress_buckets_into_projects(bridget):
     items = [{'id': 'mg-aaaa', 'type': 'idea', 'tags': ['in-progress']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-aaaa']
     assert buckets['Designs'] == []
+
+
+def test_idea_with_kickoff_pending_falls_through_to_designs(bridget):
+    # mg-b824: only `in-progress` routes to Projects. Pre-launch lifecycle
+    # tags like `kickoff-pending` now fall through to Designs.
+    items = [{'id': 'mg-bbc2', 'type': 'idea', 'tags': ['kickoff-pending']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-bbc2']
+
+
+def test_idea_with_scheduled_falls_through_to_designs(bridget):
+    # mg-b824: `scheduled` no longer routes to Projects.
+    items = [{'id': 'mg-fea0', 'type': 'idea', 'tags': ['scheduled']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-fea0']
+
+
+def test_idea_with_done_falls_through_to_designs(bridget):
+    # mg-b824: `done` no longer routes to Projects.
+    items = [{'id': 'mg-1111', 'type': 'idea', 'tags': ['done']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-1111']
+
+
+def test_idea_with_cancelled_falls_through_to_designs(bridget):
+    # mg-b824: `cancelled` no longer routes to Projects.
+    items = [{'id': 'mg-2222', 'type': 'idea', 'tags': ['cancelled']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-2222']
 
 
 def test_idea_with_only_parent_project_tag_stays_in_designs(bridget):
@@ -86,7 +114,7 @@ def test_idea_with_no_tags_at_all_stays_in_designs(bridget):
     assert [i['id'] for i in buckets['Designs']] == ['mg-eeee']
 
 
-def test_task_with_project_tag_stays_in_tasks(bridget):
+def test_task_with_in_progress_tag_stays_in_tasks(bridget):
     # Tag check only fires for type=idea — non-idea types are unaffected.
     items = [{'id': 'mg-ffff', 'type': 'task', 'tags': ['in-progress']}]
     buckets = bridget.categorize_in_flight(items)
@@ -94,31 +122,21 @@ def test_task_with_project_tag_stays_in_tasks(bridget):
     assert [i['id'] for i in buckets['Tasks']] == ['mg-ffff']
 
 
-def test_bug_with_project_tag_stays_in_bugs(bridget):
-    items = [{'id': 'mg-gggg', 'type': 'bug', 'tags': ['kickoff-pending']}]
+def test_bug_with_in_progress_tag_stays_in_bugs(bridget):
+    items = [{'id': 'mg-gggg', 'type': 'bug', 'tags': ['in-progress']}]
     buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []
     assert [i['id'] for i in buckets['Bugs']] == ['mg-gggg']
 
 
-def test_idea_with_parent_project_and_status_tag_buckets_into_projects(bridget):
-    # Post-mg-1ef2-revise: parent-project: tag is informational only;
-    # Project-status tag still routes the item to Projects.
+def test_idea_with_parent_project_and_in_progress_buckets_into_projects(bridget):
+    # parent-project: tag is informational only; `in-progress` still routes
+    # the item to Projects.
     items = [{'id': 'mg-hhhh', 'type': 'idea',
-              'tags': ['bridget', 'scheduled', 'parent-project:mg-bbc2']}]
+              'tags': ['bridget', 'in-progress', 'parent-project:mg-bbc2']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-hhhh']
     assert buckets['Designs'] == []
-
-
-def test_all_project_status_tags_route_to_projects(bridget):
-    # Every tag in _PROJECT_TAGS should bucket a Type=idea into Projects.
-    for tag in bridget._PROJECT_TAGS:
-        items = [{'id': f'mg-{tag}', 'type': 'idea', 'tags': [tag]}]
-        buckets = bridget.categorize_in_flight(items)
-        assert [i['id'] for i in buckets['Projects']] == [f'mg-{tag}'], (
-            f"tag {tag!r} did not route to Projects"
-        )
 
 
 # -- STATUS_SECTION_ORDER --------------------------------------------------
@@ -138,7 +156,7 @@ def test_section_order_starts_with_projects(bridget):
 def test_status_summary_renders_projects_section_before_designs(
         bridget, monkeypatch):
     items = [
-        {'id': 'mg-bbc2', 'type': 'idea', 'status': 'claimed',
+        {'id': 'mg-79e8', 'type': 'idea', 'status': 'claimed',
          'title': 'a project', 'tags': ['in-progress']},
         {'id': 'mg-dddd', 'type': 'idea', 'status': 'available',
          'title': 'a design'},
@@ -149,7 +167,7 @@ def test_status_summary_renders_projects_section_before_designs(
     assert '**Projects**' in summary
     assert '**Designs**' in summary
     assert summary.index('**Projects**') < summary.index('**Designs**')
-    assert '[mg-bbc2] claimed: a project' in summary
+    assert '[mg-79e8] claimed: a project' in summary
     assert '[mg-dddd] available: a design' in summary
 
 

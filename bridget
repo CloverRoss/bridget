@@ -1195,20 +1195,13 @@ _TYPE_TO_SECTION = {
     'task':   'Tasks',
 }
 
-# Tags that mark a Type=idea item as a Project root (vs. an ordinary design).
-# Project-roots get their own bucket so they don't drown in Designs.
-_PROJECT_TAGS = frozenset({
-    'kickoff-pending', 'kickoff-done', 'roadmap-drafted',
-    'in-progress', 'scheduled', 'ready-for-kickoff',
-    'done', 'cancelled',
-    'handed-off-to-mayor', 'staged',
-})
-
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
-    Type=idea items carrying a Project-status tag (see _PROJECT_TAGS) bucket
-    into 'Projects' instead of 'Designs' so Project-roots stay visible.
+    Type=idea items tagged 'in-progress' bucket into 'Projects' instead of
+    'Designs' so the currently-running Project stays visible. Other Project
+    lifecycle states (scheduled, done, cancelled, etc.) fall through to
+    Designs — they're not in flight and live on the Product Roadmap.
 
     Type=report items tagged 'approved' are filtered out — they've been
     scheduled into a Project, and the Project entry takes over visibility.
@@ -1217,7 +1210,7 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     for item in items:
         if item.get('type') == 'report' and 'approved' in (item.get('tags') or []):
             continue
-        if item.get('type') == 'idea' and _PROJECT_TAGS & set(item.get('tags') or []):
+        if item.get('type') == 'idea' and 'in-progress' in (item.get('tags') or []):
             section = 'Projects'
         else:
             section = _TYPE_TO_SECTION.get(item.get('type'), 'Other')

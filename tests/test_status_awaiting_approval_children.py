@@ -1,16 +1,17 @@
 """Tests for the Status view's handling of approved Reports + the
-_PROJECT_TAGS lifecycle-tag extension (mg-1ef2, revised 2026-05-12).
+Projects-bucket narrowing (mg-1ef2 revised; mg-b824).
 
-Part A of mg-1ef2 extended _PROJECT_TAGS with `handed-off-to-mayor`
-and `staged` so director/mayor hand-off-stage items bucket as Projects
-instead of falling through to Designs. mg-1ef2-revise keeps that
-extension intact.
+mg-1ef2 originally extended a _PROJECT_TAGS set so a wider range of
+lifecycle tags routed Type=idea items into Projects. mg-b824 then
+narrowed that to only the `in-progress` tag, so pre-launch lifecycle
+items (kickoff-pending, scheduled, handed-off-to-mayor, staged, etc.)
+now fall through to Designs. Part A below verifies that narrowing.
 
 The original Part B (awaiting-approval children sub-list) has been
 reverted by mg-1ef2-revise — see test_status_children_collapse.py for
-the flat-by-type behavior that replaced it. This file now covers the
-replacement Part B: Type=report items tagged `approved` are filtered
-out of the Reports bucket because they have moved on to Project form.
+the flat-by-type behavior that replaced it. Part B here covers the
+replacement: Type=report items tagged `approved` are filtered out of
+the Reports bucket because they have moved on to Project form.
 """
 import importlib.util
 import json
@@ -51,44 +52,49 @@ def _ndjson(items: list[dict]) -> str:
     return '\n'.join(json.dumps(i) for i in items) + '\n'
 
 
-# -- Part A: _PROJECT_TAGS extension (retained from mg-1ef2) ---------------
+# -- Part A: Projects bucket narrowed to `in-progress` only (mg-b824) ------
 
-def test_handed_off_to_mayor_buckets_into_projects(bridget):
+def test_handed_off_to_mayor_falls_through_to_designs(bridget):
+    # mg-b824: hand-off-stage items are not actively running, so they no
+    # longer route into Projects.
     items = [{'id': 'mg-fea0', 'type': 'idea',
               'tags': ['handed-off-to-mayor', 'staged']}]
     buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-fea0']
-    assert buckets['Designs'] == []
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-fea0']
 
 
-def test_staged_alone_buckets_into_projects(bridget):
+def test_staged_alone_falls_through_to_designs(bridget):
     items = [{'id': 'mg-aaaa', 'type': 'idea', 'tags': ['staged']}]
     buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-aaaa']
-    assert buckets['Designs'] == []
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-aaaa']
 
 
-def test_handed_off_alone_buckets_into_projects(bridget):
+def test_handed_off_alone_falls_through_to_designs(bridget):
     items = [{'id': 'mg-bbbb', 'type': 'idea', 'tags': ['handed-off-to-mayor']}]
     buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-bbbb']
-    assert buckets['Designs'] == []
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-bbbb']
 
 
-def test_ordinary_kickoff_pending_still_buckets_into_projects(bridget):
-    # Regression: existing canonical Project tag still routes correctly.
+def test_kickoff_pending_falls_through_to_designs(bridget):
+    # mg-b824: pre-launch lifecycle states fall through to Designs.
     items = [{'id': 'mg-bbc2', 'type': 'idea', 'tags': ['kickoff-pending']}]
     buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-bbc2']
+    assert buckets['Projects'] == []
+    assert [i['id'] for i in buckets['Designs']] == ['mg-bbc2']
+
+
+def test_in_progress_idea_buckets_into_projects(bridget):
+    # mg-b824 canonical case: only `in-progress` routes to Projects.
+    items = [{'id': 'mg-79e8', 'type': 'idea', 'tags': ['in-progress']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
     assert buckets['Designs'] == []
 
 
-def test_new_project_tags_listed_in_constant(bridget):
-    assert 'handed-off-to-mayor' in bridget._PROJECT_TAGS
-    assert 'staged' in bridget._PROJECT_TAGS
-
-
-def test_mg_fea0_style_handoff_item_renders_under_projects(
+def test_mg_fea0_style_handoff_item_renders_under_designs(
         bridget, monkeypatch):
     items = [
         {'id': 'mg-fea0', 'type': 'idea', 'status': 'claimed',
@@ -98,21 +104,21 @@ def test_mg_fea0_style_handoff_item_renders_under_projects(
     monkeypatch.setattr(bridget, 'run_mg',
                         lambda args: (0, _ndjson(items), ''))
     summary = bridget.get_status_summary()
-    assert '**Projects**' in summary
-    assert '**Designs**' not in summary
+    assert '**Projects**' not in summary
+    assert '**Designs**' in summary
     assert '[mg-fea0] claimed: hand-off-stage item' in summary
 
 
-def test_kickoff_pending_idea_renders_under_projects(bridget, monkeypatch):
+def test_in_progress_idea_renders_under_projects(bridget, monkeypatch):
     items = [
-        {'id': 'mg-bbc2', 'type': 'idea', 'status': 'available',
-         'title': 'fresh project', 'tags': ['kickoff-pending']},
+        {'id': 'mg-79e8', 'type': 'idea', 'status': 'claimed',
+         'title': 'live project', 'tags': ['in-progress']},
     ]
     monkeypatch.setattr(bridget, 'run_mg',
                         lambda args: (0, _ndjson(items), ''))
     summary = bridget.get_status_summary()
     assert '**Projects**' in summary
-    assert '[mg-bbc2] available: fresh project' in summary
+    assert '[mg-79e8] claimed: live project' in summary
     assert '**Designs**' not in summary
 
 
