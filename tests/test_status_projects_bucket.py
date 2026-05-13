@@ -1,11 +1,12 @@
 """Tests for the Status view's dedicated Projects bucket (mg-946e, mg-b824,
-mg-4955, mg-2e39).
+mg-4955, mg-2e39, mg-e68c).
 
 Per mg-1d2b Phase 5, Projects are first-class `--type=project` mg items.
-Type=project items tagged with an in-progress signal (canonical
-`in-progress` or mayor's `kickoff-done`) bucket into 'Projects'; other
-Type=project items are hidden — they live on the Product Roadmap, not
-the status view.
+Per the mg-e68c tag-taxonomy migration, only the canonical `in-progress`
+lifecycle tag promotes a Type=project into the 'Projects' bucket; all
+other states (`scheduled`, `ready-for-kickoff`, `done`, `cancelled`, or
+no canonical tag) are hidden — they live on the Product Roadmap, not the
+status view.
 
 During the transition window, Type=idea items still carrying legacy
 Project-lifecycle tags (`scheduled`, `in-progress`, `kickoff-done`, etc.)
@@ -61,17 +62,15 @@ def test_project_with_in_progress_buckets_into_projects(bridget):
     assert buckets['Designs'] == []
 
 
-def test_project_with_kickoff_done_buckets_into_projects(bridget):
-    # mg-4955: mayor's current flow marks a kicked-off Project with
-    # `kickoff-done`; accept it as in-progress alongside the canonical tag.
-    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
-    buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
-    assert buckets['Designs'] == []
-
-
 def test_project_with_scheduled_is_hidden(bridget):
     items = [{'id': 'mg-fea0', 'type': 'project', 'tags': ['scheduled']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+
+
+def test_project_with_ready_for_kickoff_is_hidden(bridget):
+    items = [{'id': 'mg-5555', 'type': 'project',
+              'tags': ['ready-for-kickoff']}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
@@ -88,6 +87,14 @@ def test_project_with_cancelled_is_hidden(bridget):
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
+def test_project_with_no_canonical_lifecycle_tag_is_hidden(bridget):
+    # Post mg-e68c: legacy `kickoff-done` is no longer a running signal;
+    # without canonical `in-progress`, the Project is hidden.
+    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+
+
 def test_project_with_no_tags_is_hidden(bridget):
     # Type=project with no in-progress tag → hidden (lives on Roadmap).
     items = [{'id': 'mg-3333', 'type': 'project'}]
@@ -95,44 +102,13 @@ def test_project_with_no_tags_is_hidden(bridget):
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_kickoff_done_and_other_lifecycle_tags_buckets_into_projects(bridget):
-    # Realistic mg-79e8 shape: running Project carries several lifecycle
-    # tags including kickoff-done. The in-progress signal wins.
+def test_project_with_in_progress_and_other_tags_buckets_into_projects(bridget):
+    # Domain/scope tags alongside the canonical lifecycle tag do not
+    # affect bucketing — only `in-progress` matters.
     items = [{'id': 'mg-79e8', 'type': 'project',
-              'tags': ['handed-off-to-mayor', 'staged', 'roadmap-drafted',
-                       'kickoff-done']}]
+              'tags': ['bridget', 'infra', 'high-priority', 'in-progress']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
-    assert buckets['Designs'] == []
-
-
-def test_project_with_scheduled_and_kickoff_done_is_hidden(bridget):
-    # mg-5f78 bug repro: during the mg-1d2b Phase 4 transition window
-    # mayor may stamp both canonical 'scheduled' and legacy 'kickoff-done'
-    # on the same Project. Canonical state wins — item is hidden.
-    items = [{'id': 'mg-79e8', 'type': 'project',
-              'tags': ['scheduled', 'kickoff-done']}]
-    buckets = bridget.categorize_in_flight(items)
-    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
-
-
-def test_project_with_done_and_in_progress_buckets_into_projects(bridget):
-    # mg-a106: canonical 'in-progress' wins over canonical not-running
-    # tags when both are present (legacy accumulation).
-    items = [{'id': 'mg-4444', 'type': 'project',
-              'tags': ['done', 'in-progress']}]
-    buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-4444']
-
-
-def test_project_with_in_progress_and_scheduled_and_kickoff_done_buckets_into_projects(bridget):
-    # mg-a106 / mg-fea0 case: canonical 'in-progress' wins outright even
-    # alongside legacy-accumulated 'scheduled' and 'kickoff-done' tags.
-    # Regression from mg-5f78 / mg-7555: was wrongly hidden.
-    items = [{'id': 'mg-fea0', 'type': 'project',
-              'tags': ['in-progress', 'scheduled', 'kickoff-done']}]
-    buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-fea0']
     assert buckets['Designs'] == []
 
 

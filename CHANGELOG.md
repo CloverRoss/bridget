@@ -5,6 +5,17 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.41.0] - 2026-05-13
+
+### Changed
+
+- Simplified `categorize_in_flight` Type=project branch post-mg-e68c
+  tag migration. Only canonical `in-progress` bucks into Projects;
+  all other states hidden. Dropped `_CANONICAL_NOT_RUNNING` and
+  `_IN_PROGRESS_TAGS` frozensets and the legacy `kickoff-done`
+  fallback path. Cleaner code; fewer regressions. (mg-e68c
+  follow-on / mg-b014)
+
 ## [4.40.0] - 2026-05-13
 
 ### Fixed

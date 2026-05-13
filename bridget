@@ -1500,19 +1500,6 @@ _PROJECT_TAGS = frozenset({
     'handed-off-to-mayor', 'staged',
 })
 
-# Tags that mark a Project as actually running right now. Accept both
-# canonical 'in-progress' and mayor's current 'kickoff-done' until the
-# director-rewrite cascade standardizes on 'in-progress'.
-_IN_PROGRESS_TAGS = frozenset({'in-progress', 'kickoff-done'})
-
-# Canonical 5-state vocab tags that signal NOT actively running.
-# Take precedence over the legacy in-progress signal (kickoff-done)
-# but NOT over canonical 'in-progress' (mg-a106). During the mg-1d2b
-# Phase 4 transition window mayor may apply both.
-_CANONICAL_NOT_RUNNING = frozenset({
-    'scheduled', 'ready-for-kickoff', 'done', 'cancelled',
-})
-
 # mg item-type → status section. Anything not listed falls into "Other".
 _TYPE_TO_SECTION = {
     'report': 'Reports',
@@ -1524,9 +1511,9 @@ _TYPE_TO_SECTION = {
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
-    Type=project items tagged with an _IN_PROGRESS_TAGS tag bucket into
-    'Projects'; other Type=project items are hidden entirely — they're
-    not in flight and live on the Product Roadmap, not the status view.
+    Type=project items tagged 'in-progress' bucket into 'Projects'; other
+    Type=project items are hidden entirely — they're not in flight and
+    live on the Product Roadmap, not the status view.
 
     Type=idea items still carrying legacy _PROJECT_TAGS lifecycle tags
     are suppressed entirely during the mg-1d2b Phase 5 transition window
@@ -1544,16 +1531,8 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
             continue
         if item_type == 'project':
             if 'in-progress' in tags:
-                # canonical in-progress wins outright, even alongside
-                # legacy-accumulated not-running tags (mg-a106)
                 buckets['Projects'].append(item)
-                continue
-            if _CANONICAL_NOT_RUNNING & tags:
-                continue  # canonical says not-running, no in-progress to override
-            if _IN_PROGRESS_TAGS & tags:
-                # legacy fallback: kickoff-done with no canonical state
-                buckets['Projects'].append(item)
-            continue  # non-in-progress projects: hidden (live on Roadmap)
+            continue  # other states hidden — live on Roadmap
         if item_type == 'idea' and _PROJECT_TAGS & tags:
             continue  # legacy un-retyped Project: hide from Designs
         section = _TYPE_TO_SECTION.get(item_type, 'Other')

@@ -1,16 +1,18 @@
 """Tests for the Status view's handling of approved Reports + the
-Projects-bucket narrowing (mg-1ef2 revised; mg-b824; mg-4955; mg-2e39).
+Projects-bucket narrowing (mg-1ef2 revised; mg-b824; mg-4955; mg-2e39;
+mg-e68c).
 
 mg-1ef2 originally extended a _PROJECT_TAGS set so a wider range of
 lifecycle tags routed Type=idea items into Projects. mg-b824 narrowed
 that to only the `in-progress` tag. mg-4955 then split the taxonomy
 into _PROJECT_TAGS (any Project-lifecycle tag) and _IN_PROGRESS_TAGS
-(`in-progress` plus mayor's `kickoff-done`). mg-2e39 then promoted
-Projects to a first-class mg `--type=project`: Type=project +
-_IN_PROGRESS_TAGS → Projects; other Type=project → hidden; Type=idea
-items still carrying legacy lifecycle tags (transition window) are
-suppressed entirely from Designs. Part A below verifies the new
-type-based routing.
+(`in-progress` plus mayor's `kickoff-done`). mg-2e39 promoted Projects
+to a first-class mg `--type=project`. mg-e68c then standardized on the
+canonical 5-state lifecycle vocab and dropped the legacy fallback:
+Type=project + canonical `in-progress` → Projects; everything else
+(including legacy `kickoff-done`) → hidden. Type=idea items still
+carrying legacy lifecycle tags (transition window) remain suppressed
+from Designs. Part A below verifies the new type-based routing.
 
 The original Part B (awaiting-approval children sub-list) has been
 reverted by mg-1ef2-revise — see test_status_children_collapse.py for
@@ -94,13 +96,13 @@ def test_in_progress_project_buckets_into_projects(bridget):
     assert buckets['Designs'] == []
 
 
-def test_kickoff_done_project_buckets_into_projects(bridget):
-    # mayor's `kickoff-done` is accepted as an in-progress signal until
-    # the director-rewrite cascade standardizes on canonical 'in-progress'.
+def test_kickoff_done_project_is_hidden(bridget):
+    # Post mg-e68c: legacy `kickoff-done` is no longer a running signal.
+    # Mayor's migration retags such Projects to canonical 'in-progress';
+    # any stale `kickoff-done`-only Project is hidden.
     items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
     buckets = bridget.categorize_in_flight(items)
-    assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
-    assert buckets['Designs'] == []
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
 def test_mg_fea0_style_handoff_item_omitted_from_status(
