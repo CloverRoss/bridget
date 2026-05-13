@@ -1,9 +1,11 @@
-"""Tests for the `open mg-XXXX` command (mg-d3d7 / mg-97eb).
+"""Tests for the `open mg-XXXX` command (mg-d3d7 / mg-97eb / mg-7a57).
 
 `open` is the design-doc retrieval verb that splits off from `read`:
-- Only returns the body when frontmatter `status:` is `awaiting-approval`.
-- Any other status (approved, rejected, missing file, malformed frontmatter,
-  bad regex) returns `design not found` (or a usage hint for non-mg-ids).
+- Only renders the body when frontmatter `status:` is `awaiting-approval`.
+- Missing file or unreadable/parse-error file → `design not found`.
+- Design exists but its status is past awaiting-approval (approved,
+  auto-approved, rejected) or otherwise unknown → reply names the status
+  and points at the iCloud path so the user can grab the full doc.
 - Long bodies truncate at OPEN_BODY_LIMIT with a continuation footer
   pointing at the iCloud path so the user can grab the full doc on a laptop.
 
@@ -89,57 +91,120 @@ def test_open_is_case_insensitive_on_id(bridget):
     assert '**t** (mg-c0de)' in reply
 
 
-# -- not-found cases (single canonical response) ----------------------------
+# -- design-exists-but-past-awaiting-approval --------------------------------
+# Replies still tell the user where to find the full doc rather than
+# pretending the design vanished.
 
-def test_open_approved_status_returns_not_found(bridget):
+def test_open_approved_status_names_status_and_path(bridget):
     (bridget.DESIGNS_DIR / 'mg-a000.md').write_text(
         '---\nstatus: approved\n---\n# d\nbody\n'
     )
-    assert bridget.handle_command('open mg-a000') == 'design not found'
+    reply = bridget.handle_command('open mg-a000')
+    assert 'approved' in reply
+    assert 'no longer awaiting approval' in reply
+    assert 'Full doc at' in reply
+    assert 'mg-a000.md' in reply
 
 
-def test_open_rejected_status_returns_not_found(bridget):
+def test_open_rejected_status_names_status_and_path(bridget):
     (bridget.DESIGNS_DIR / 'mg-1111.md').write_text(
         '---\nstatus: rejected\n---\n# d\nbody\n'
     )
-    assert bridget.handle_command('open mg-1111') == 'design not found'
+    reply = bridget.handle_command('open mg-1111')
+    assert 'rejected' in reply
+    assert 'Full doc at' in reply
 
 
-def test_open_auto_approved_status_returns_not_found(bridget):
-    # Any non-awaiting-approval status, including pre-approval auto-approved
-    # designs, returns the same not-found response per spec.
+def test_open_auto_approved_status_names_status_and_path(bridget):
+    # Pre-approval auto-approved designs are also past the awaiting-approval
+    # phase — surface the status so the user knows the doc is real, just no
+    # longer pending.
     (bridget.DESIGNS_DIR / 'mg-2222.md').write_text(
         '---\nstatus: auto-approved\n---\n# d\nbody\n'
     )
-    assert bridget.handle_command('open mg-2222') == 'design not found'
+    reply = bridget.handle_command('open mg-2222')
+    assert 'auto-approved' in reply
+    assert 'Full doc at' in reply
 
 
 def test_open_missing_file_returns_not_found(bridget):
+    # No file on disk → genuinely not-found.
     assert bridget.handle_command('open mg-dead') == 'design not found'
 
 
-def test_open_file_without_status_field_returns_not_found(bridget):
-    # File exists, has frontmatter, but no `status:` line.
+def test_open_file_without_status_field_says_unknown(bridget):
+    # File exists, has frontmatter, but no `status:` line. We can't tell
+    # which phase it's in, so we say "unknown" but still point at the doc.
     (bridget.DESIGNS_DIR / 'mg-3333.md').write_text(
         '---\ntitle: lonely\n---\n# d\nbody\n'
     )
-    assert bridget.handle_command('open mg-3333') == 'design not found'
+    reply = bridget.handle_command('open mg-3333')
+    assert 'unknown' in reply
+    assert 'Full doc at' in reply
 
 
-def test_open_file_without_frontmatter_returns_not_found(bridget):
-    # No frontmatter at all → no status → not found. Defensive: an old or
-    # corrupt design shouldn't half-render.
+def test_open_file_without_frontmatter_says_unknown(bridget):
+    # No frontmatter at all → no status → unknown. Defensive: an old or
+    # corrupt design shouldn't half-render the body, but the file exists so
+    # we still send the user to the iCloud copy.
     (bridget.DESIGNS_DIR / 'mg-4444.md').write_text('# Title\n\nplain body\n')
-    assert bridget.handle_command('open mg-4444') == 'design not found'
+    reply = bridget.handle_command('open mg-4444')
+    assert 'unknown' in reply
+    assert 'Full doc at' in reply
 
 
-def test_open_unparseable_frontmatter_returns_not_found(bridget):
+def test_open_unparseable_frontmatter_says_unknown(bridget):
     # Half-open frontmatter (no closing ---) means FRONTMATTER_RE doesn't
-    # match → treated as no frontmatter → no status → not found.
+    # match → treated as no frontmatter → no status → unknown. File exists
+    # so we still surface the iCloud path.
     (bridget.DESIGNS_DIR / 'mg-5555.md').write_text(
         '---\nstatus: awaiting-approval\n\nno closing fence\n'
     )
-    assert bridget.handle_command('open mg-5555') == 'design not found'
+    reply = bridget.handle_command('open mg-5555')
+    assert 'unknown' in reply
+    assert 'Full doc at' in reply
+
+
+def test_open_parse_error_returns_not_found_and_logs_stderr(bridget, monkeypatch, capsys):
+    # Force the inner parse path to raise — read_design swallows the
+    # exception, logs it, and returns None so the handler reports the
+    # canonical not-found string. Visibility lives in stderr.
+    (bridget.DESIGNS_DIR / 'mg-7777.md').write_text(
+        '---\nstatus: awaiting-approval\n---\nbody\n'
+    )
+
+    class _BoomRE:
+        def search(self, _text):
+            raise RuntimeError('synthetic parse failure')
+
+    monkeypatch.setattr(bridget, 'FRONTMATTER_STATUS_RE', _BoomRE())
+    reply = bridget.handle_command('open mg-7777')
+    assert reply == 'design not found'
+    captured = capsys.readouterr()
+    assert 'parse error for mg-7777' in captured.err
+
+
+def test_open_multiline_yaml_array_in_frontmatter_extracts_status(bridget):
+    # Real designs often carry a `revision_log:` array with bulleted entries
+    # spanning multiple lines. Regression: the status regex must still find
+    # the status line regardless of other multi-line fields.
+    (bridget.DESIGNS_DIR / 'mg-8888.md').write_text(
+        '---\n'
+        'mg_id: mg-8888\n'
+        'title: revised design\n'
+        'status: awaiting-approval\n'
+        'revision_log:\n'
+        '  - 2026-05-10: initial draft\n'
+        '  - 2026-05-11: addressed reviewer feedback\n'
+        '  - 2026-05-12: clarified scope\n'
+        '---\n'
+        '# Heading\n\nbody text.\n'
+    )
+    reply = bridget.handle_command('open mg-8888')
+    assert reply.startswith('**revised design** (mg-8888)')
+    assert 'body text.' in reply
+    # frontmatter (including the multi-line array) is stripped from the reply.
+    assert 'revision_log' not in reply
 
 
 # -- usage / validation -----------------------------------------------------
