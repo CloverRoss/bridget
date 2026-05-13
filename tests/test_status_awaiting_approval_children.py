@@ -1,13 +1,16 @@
 """Tests for the Status view's handling of approved Reports + the
-Projects-bucket narrowing (mg-1ef2 revised; mg-b824; mg-4955).
+Projects-bucket narrowing (mg-1ef2 revised; mg-b824; mg-4955; mg-2e39).
 
 mg-1ef2 originally extended a _PROJECT_TAGS set so a wider range of
 lifecycle tags routed Type=idea items into Projects. mg-b824 narrowed
 that to only the `in-progress` tag. mg-4955 then split the taxonomy
 into _PROJECT_TAGS (any Project-lifecycle tag) and _IN_PROGRESS_TAGS
-(`in-progress` plus mayor's `kickoff-done`): in-progress → Projects;
-any other Project-lifecycle tag → hidden from status entirely (the
-item lives on the Product Roadmap). Part A below verifies that split.
+(`in-progress` plus mayor's `kickoff-done`). mg-2e39 then promoted
+Projects to a first-class mg `--type=project`: Type=project +
+_IN_PROGRESS_TAGS → Projects; other Type=project → hidden; Type=idea
+items still carrying legacy lifecycle tags (transition window) are
+suppressed entirely from Designs. Part A below verifies the new
+type-based routing.
 
 The original Part B (awaiting-approval children sub-list) has been
 reverted by mg-1ef2-revise — see test_status_children_collapse.py for
@@ -54,49 +57,47 @@ def _ndjson(items: list[dict]) -> str:
     return '\n'.join(json.dumps(i) for i in items) + '\n'
 
 
-# -- Part A: Projects bucket narrowed to `in-progress` only (mg-b824) ------
+# -- Part A: Projects bucket reads Type=project + in-progress (mg-2e39) ----
 
-def test_handed_off_to_mayor_is_hidden(bridget):
-    # mg-4955: hand-off-stage items are Project-lifecycle but not running,
-    # so they're hidden from status entirely.
-    items = [{'id': 'mg-fea0', 'type': 'idea',
+def test_project_with_handed_off_to_mayor_is_hidden(bridget):
+    # Project-lifecycle but not running → hidden from status.
+    items = [{'id': 'mg-fea0', 'type': 'project',
               'tags': ['handed-off-to-mayor', 'staged']}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_staged_alone_is_hidden(bridget):
-    # mg-4955: `staged` is a Project-lifecycle tag → hidden from status.
-    items = [{'id': 'mg-aaaa', 'type': 'idea', 'tags': ['staged']}]
+def test_project_with_staged_alone_is_hidden(bridget):
+    items = [{'id': 'mg-aaaa', 'type': 'project', 'tags': ['staged']}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_handed_off_alone_is_hidden(bridget):
-    # mg-4955: handed-off-to-mayor is a Project-lifecycle tag → hidden.
-    items = [{'id': 'mg-bbbb', 'type': 'idea', 'tags': ['handed-off-to-mayor']}]
+def test_project_with_handed_off_alone_is_hidden(bridget):
+    items = [{'id': 'mg-bbbb', 'type': 'project',
+              'tags': ['handed-off-to-mayor']}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_kickoff_pending_is_hidden(bridget):
-    # mg-4955: pre-launch lifecycle states are hidden from status entirely.
-    items = [{'id': 'mg-bbc2', 'type': 'idea', 'tags': ['kickoff-pending']}]
+def test_project_with_kickoff_pending_is_hidden(bridget):
+    items = [{'id': 'mg-bbc2', 'type': 'project',
+              'tags': ['kickoff-pending']}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_in_progress_idea_buckets_into_projects(bridget):
-    # mg-b824 canonical case: `in-progress` routes to Projects.
-    items = [{'id': 'mg-79e8', 'type': 'idea', 'tags': ['in-progress']}]
+def test_in_progress_project_buckets_into_projects(bridget):
+    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['in-progress']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
     assert buckets['Designs'] == []
 
 
-def test_kickoff_done_idea_buckets_into_projects(bridget):
-    # mg-4955: mayor's `kickoff-done` is accepted as an in-progress signal.
-    items = [{'id': 'mg-79e8', 'type': 'idea', 'tags': ['kickoff-done']}]
+def test_kickoff_done_project_buckets_into_projects(bridget):
+    # mayor's `kickoff-done` is accepted as an in-progress signal until
+    # the director-rewrite cascade standardizes on canonical 'in-progress'.
+    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
     assert buckets['Designs'] == []
@@ -104,10 +105,10 @@ def test_kickoff_done_idea_buckets_into_projects(bridget):
 
 def test_mg_fea0_style_handoff_item_omitted_from_status(
         bridget, monkeypatch):
-    # mg-4955: a real-world handed-off-to-mayor + staged Project root is
-    # hidden from the status view; it lives on the Product Roadmap.
+    # A real-world handed-off-to-mayor + staged Project is hidden from
+    # the status view; it lives on the Product Roadmap.
     items = [
-        {'id': 'mg-fea0', 'type': 'idea', 'status': 'claimed',
+        {'id': 'mg-fea0', 'type': 'project', 'status': 'claimed',
          'title': 'hand-off-stage item',
          'tags': ['handed-off-to-mayor', 'staged']},
     ]
@@ -119,9 +120,9 @@ def test_mg_fea0_style_handoff_item_omitted_from_status(
     assert 'mg-fea0' not in summary
 
 
-def test_in_progress_idea_renders_under_projects(bridget, monkeypatch):
+def test_in_progress_project_renders_under_projects(bridget, monkeypatch):
     items = [
-        {'id': 'mg-79e8', 'type': 'idea', 'status': 'claimed',
+        {'id': 'mg-79e8', 'type': 'project', 'status': 'claimed',
          'title': 'live project', 'tags': ['in-progress']},
     ]
     monkeypatch.setattr(bridget, 'run_mg',
@@ -133,8 +134,8 @@ def test_in_progress_idea_renders_under_projects(bridget, monkeypatch):
 
 
 def test_ordinary_idea_without_project_tag_stays_in_designs(bridget):
-    # Regression on mg-1ef2-revise rollback: plain Type=idea with no
-    # Project-status tags and no parent-project: tag stays in Designs.
+    # Regression: plain Type=idea with no Project-lifecycle tags and no
+    # parent-project: tag stays in Designs.
     items = [{'id': 'mg-dddd', 'type': 'idea', 'tags': ['bridget']}]
     buckets = bridget.categorize_in_flight(items)
     assert buckets['Projects'] == []

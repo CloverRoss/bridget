@@ -54,7 +54,7 @@ def _ndjson(items: list[dict]) -> str:
 
 def test_child_idea_routes_to_designs(bridget):
     items = [
-        {'id': 'mg-bbc2', 'type': 'idea', 'tags': ['in-progress'],
+        {'id': 'mg-bbc2', 'type': 'project', 'tags': ['in-progress'],
          'title': 'parent', 'status': 'claimed'},
         {'id': 'mg-c001', 'type': 'idea', 'tags': ['parent-project:mg-bbc2'],
          'title': 'child design', 'status': 'available'},
@@ -107,7 +107,7 @@ def test_ordinary_design_unaffected(bridget):
 def test_status_summary_renders_children_in_natural_buckets(
         bridget, monkeypatch):
     items = [
-        {'id': 'mg-bbc2', 'type': 'idea', 'status': 'claimed',
+        {'id': 'mg-bbc2', 'type': 'project', 'status': 'claimed',
          'title': 'parent project', 'tags': ['in-progress']},
         {'id': 'mg-c001', 'type': 'idea', 'status': 'pending',
          'title': 'first child design', 'tags': ['parent-project:mg-bbc2']},
@@ -138,7 +138,7 @@ def test_status_summary_renders_children_in_natural_buckets(
 def test_status_summary_no_artifacts_for_project_with_no_children(
         bridget, monkeypatch):
     items = [
-        {'id': 'mg-bbc2', 'type': 'idea', 'status': 'claimed',
+        {'id': 'mg-bbc2', 'type': 'project', 'status': 'claimed',
          'title': 'lonely project', 'tags': ['in-progress']},
     ]
     monkeypatch.setattr(bridget, 'run_mg',

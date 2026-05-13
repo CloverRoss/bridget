@@ -1213,8 +1213,11 @@ def get_inbox_summary() -> str:
 # Order in which status sections render; empty buckets are omitted.
 STATUS_SECTION_ORDER = ('Projects', 'Reports', 'Designs', 'Bugs', 'Tasks', 'Other')
 
-# Tags that mark a Type=idea as a Project in any lifecycle state. Items
-# with any of these tags are Project-roots, not ordinary designs.
+# Legacy lifecycle tags that used to mark a Type=idea as a Project. Kept
+# around for backward-compat suppression: during the transition window
+# (mg-1d2b Phase 5) any Type=idea items still carrying one of these tags
+# are hidden from Designs. They'll bucket normally once retyped to
+# Type=project (mg edit --type=project).
 _PROJECT_TAGS = frozenset({
     # canonical 5-state vocab (target end-state)
     'scheduled', 'ready-for-kickoff', 'in-progress',
@@ -1240,10 +1243,14 @@ _TYPE_TO_SECTION = {
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
-    Type=idea items with any _PROJECT_TAGS tag are Project-roots. If
-    they also carry an _IN_PROGRESS_TAGS tag they bucket into 'Projects';
-    otherwise they're hidden entirely — they're not in flight and live
-    on the Product Roadmap, not the status view.
+    Type=project items tagged with an _IN_PROGRESS_TAGS tag bucket into
+    'Projects'; other Type=project items are hidden entirely — they're
+    not in flight and live on the Product Roadmap, not the status view.
+
+    Type=idea items still carrying legacy _PROJECT_TAGS lifecycle tags
+    are suppressed entirely during the mg-1d2b Phase 5 transition window
+    — they must NOT appear in Designs. Once retyped to Type=project they
+    bucket normally.
 
     Type=report items tagged 'approved' are filtered out — they've been
     scheduled into a Project, and the Project entry takes over visibility.
@@ -1254,10 +1261,12 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
         item_type = item.get('type')
         if item_type == 'report' and 'approved' in tags:
             continue
-        if item_type == 'idea' and _PROJECT_TAGS & tags:
+        if item_type == 'project':
             if _IN_PROGRESS_TAGS & tags:
                 buckets['Projects'].append(item)
-            continue  # Project but not in-flight: lives on Product Roadmap
+            continue  # non-in-progress projects: hidden (live on Roadmap)
+        if item_type == 'idea' and _PROJECT_TAGS & tags:
+            continue  # legacy un-retyped Project: hide from Designs
         section = _TYPE_TO_SECTION.get(item_type, 'Other')
         buckets[section].append(item)
     return buckets
