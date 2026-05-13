@@ -5,6 +5,16 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.32.0] - 2026-05-13
+
+### Fixed
+
+- Projects bucket: canonical in-progress tag now wins over canonical
+  not-running tags when both present. Fixes mg-fea0 disappearance
+  after mg-5f78 / mg-7555 shipped. Precedence: in-progress (canonical)
+  > not-running (canonical) > kickoff-done (legacy fallback).
+  (mg-a106)
+
 ## [4.31.0] - 2026-05-13
 
 ### Changed

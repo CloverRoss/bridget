@@ -1401,8 +1401,9 @@ _PROJECT_TAGS = frozenset({
 _IN_PROGRESS_TAGS = frozenset({'in-progress', 'kickoff-done'})
 
 # Canonical 5-state vocab tags that signal NOT actively running.
-# Take precedence over legacy in-progress signals (kickoff-done) —
-# during the mg-1d2b Phase 4 transition window mayor may apply both.
+# Take precedence over the legacy in-progress signal (kickoff-done)
+# but NOT over canonical 'in-progress' (mg-a106). During the mg-1d2b
+# Phase 4 transition window mayor may apply both.
 _CANONICAL_NOT_RUNNING = frozenset({
     'scheduled', 'ready-for-kickoff', 'done', 'cancelled',
 })
@@ -1437,9 +1438,15 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
         if item_type == 'report' and 'approved' in tags:
             continue
         if item_type == 'project':
+            if 'in-progress' in tags:
+                # canonical in-progress wins outright, even alongside
+                # legacy-accumulated not-running tags (mg-a106)
+                buckets['Projects'].append(item)
+                continue
             if _CANONICAL_NOT_RUNNING & tags:
-                continue  # canonical state says not-running; hide
+                continue  # canonical says not-running, no in-progress to override
             if _IN_PROGRESS_TAGS & tags:
+                # legacy fallback: kickoff-done with no canonical state
                 buckets['Projects'].append(item)
             continue  # non-in-progress projects: hidden (live on Roadmap)
         if item_type == 'idea' and _PROJECT_TAGS & tags:

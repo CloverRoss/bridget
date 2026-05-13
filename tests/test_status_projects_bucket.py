@@ -116,12 +116,24 @@ def test_project_with_scheduled_and_kickoff_done_is_hidden(bridget):
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_done_and_in_progress_is_hidden(bridget):
-    # Canonical 'done' takes precedence over in-progress signal.
+def test_project_with_done_and_in_progress_buckets_into_projects(bridget):
+    # mg-a106: canonical 'in-progress' wins over canonical not-running
+    # tags when both are present (legacy accumulation).
     items = [{'id': 'mg-4444', 'type': 'project',
               'tags': ['done', 'in-progress']}]
     buckets = bridget.categorize_in_flight(items)
-    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-4444']
+
+
+def test_project_with_in_progress_and_scheduled_and_kickoff_done_buckets_into_projects(bridget):
+    # mg-a106 / mg-fea0 case: canonical 'in-progress' wins outright even
+    # alongside legacy-accumulated 'scheduled' and 'kickoff-done' tags.
+    # Regression from mg-5f78 / mg-7555: was wrongly hidden.
+    items = [{'id': 'mg-fea0', 'type': 'project',
+              'tags': ['in-progress', 'scheduled', 'kickoff-done']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-fea0']
+    assert buckets['Designs'] == []
 
 
 # -- categorize_in_flight: legacy Type=idea suppression --------------------
