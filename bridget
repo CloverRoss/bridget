@@ -1088,9 +1088,17 @@ FRONTMATTER_RE = re.compile(r'\A---\s*\n.*?\n---\s*\n', re.DOTALL)
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*(\S+)', re.MULTILINE)
 FRONTMATTER_TITLE_RE = re.compile(r'^title:\s*(.+)$', re.MULTILINE)
 
-# Canonical mg-id form used by the `open` command and the `read` mg-id
-# guard. Same case-insensitive hex shape mg/dr work-items emit elsewhere.
-MG_ID_RE = re.compile(r'^mg-[0-9a-f]+$')
+# Canonical work-item id form used by the `open` command. Prefix is left
+# open so new families (ds-, rp-, pj-, …) work without code changes
+# (mg-f282). The same case-insensitive hex shape mg/dr/ds/rp/pj work
+# items emit elsewhere.
+MG_ID_RE = re.compile(r'^[a-z]+-[0-9a-f]+$')
+
+# Design-id prefixes that `read <id>` redirects to `open <id>`. Reading
+# designs through `read` was deprecated in mg-d3d7 in favor of `open`;
+# ds- joined mg- as a design prefix in mg-f282. Non-design prefixes
+# (dr-, rp-, pj-, …) keep the find_mails_for/design_doc fallthrough.
+DESIGN_ID_RE = re.compile(r'^(mg|ds)-[0-9a-f]+$')
 
 
 def read_design_status(mg_id: str) -> str | None:
@@ -1311,7 +1319,7 @@ def scan_pending_approvals() -> list[str]:
                     break
                 if line.startswith('Subject: approval needed '):
                     subj = line[len('Subject: '):]
-                    m = re.search(r'mg-[0-9a-f]+', subj)
+                    m = re.search(r'[a-z]+-[0-9a-f]+', subj)
                     if m and _mg_item_closed(m.group(0)):
                         break
                     out.append(subj)
@@ -1337,7 +1345,7 @@ def scan_pending_reports() -> list[str]:
                     break
                 if line.startswith('Subject: Report ready:'):
                     subj = line[len('Subject: '):]
-                    m = re.search(r'mg-[0-9a-f]+', subj)
+                    m = re.search(r'[a-z]+-[0-9a-f]+', subj)
                     if m and _mg_item_closed(m.group(0)):
                         break
                     out.append(subj)
@@ -1372,7 +1380,7 @@ def _inbox_top_list_should_hide(p) -> bool:
     if not (subj.startswith('approval needed ') or
             subj.startswith('Report ready:')):
         return False
-    m = re.search(r'mg-[0-9a-f]+', subj)
+    m = re.search(r'[a-z]+-[0-9a-f]+', subj)
     if not m:
         return False
     return _mg_item_closed(m.group(0))
@@ -1391,7 +1399,7 @@ def get_inbox_summary() -> str:
             try:
                 mail = parse_mail(p.read_text())
                 haystack = (mail['subject'] + ' ' + mail['body']).lower()
-                ids = sorted(set(re.findall(r'mg-[0-9a-f]+', haystack)))
+                ids = sorted(set(re.findall(r'[a-z]+-[0-9a-f]+', haystack)))
                 id_str = ', '.join(ids) if ids else '(no mg-id)'
                 subj = mail['subject'][:60]
                 parts.append(f'  • [m{i} / {id_str}] {mail["from"]}: {subj}')
@@ -1712,7 +1720,7 @@ def handle_command(text: str) -> str | list[str]:
     text = text.strip()
     low = text.lower()
 
-    if low.startswith('approve mg-') or low.startswith('approve dr-'):
+    if re.match(r'^approve [a-z]+-', low):
         parts = text.split(None, 1)
         mg_id = parts[1] if len(parts) > 1 else ''
         target = route_recipient(mg_id)
@@ -1729,7 +1737,7 @@ def handle_command(text: str) -> str | list[str]:
             return f"✓ approve sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
 
-    if low.startswith('reject mg-') or low.startswith('reject dr-'):
+    if re.match(r'^reject [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 2:
             return "Usage: `reject mg-XXXX <reason>` (or `dr-XXXX`)"
@@ -1749,7 +1757,7 @@ def handle_command(text: str) -> str | list[str]:
             return f"✓ reject sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
 
-    if low.startswith('revise mg-') or low.startswith('revise dr-'):
+    if re.match(r'^revise [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 3:
             return "Usage: `revise mg-XXXX <feedback>` (or `dr-XXXX`)"
@@ -1824,13 +1832,13 @@ def handle_command(text: str) -> str | list[str]:
             title = m.group(1).strip()
         return f'Notes app → Pogo Designs → **{arg}: {title}**'
 
-    if low.startswith('read mg-') or low.startswith('read dr-'):
+    if re.match(r'^read [a-z]+-', low):
         parts = text.split(None, 1)
         if len(parts) < 2:
             return "Usage: `read mg-XXXX` (or `dr-XXXX`)"
         mg_id = parts[1].strip()
 
-        if MG_ID_RE.match(mg_id.lower()):
+        if DESIGN_ID_RE.match(mg_id.lower()):
             return (
                 "`read` is for mail message-ids; "
                 "try `open mg-XXXX` for designs."
@@ -1886,13 +1894,13 @@ def handle_command(text: str) -> str | list[str]:
             n = mark_mail_read(all_unread=True, protect_actionable=True)
             log_mail_action('dismiss-all')
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read (inbox-zero)"
-        if arg.lower().startswith('mg-') or arg.lower().startswith('dr-'):
+        if re.match(r'^[a-z]+-', arg.lower()):
             n = mark_mail_read(mg_id=arg, protect_actionable=True)
             log_mail_action('dismiss', mg_id=arg)
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{arg}`"
         return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"
 
-    if low.startswith('explain mg-') or low.startswith('explain dr-'):
+    if re.match(r'^explain [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 3:
             return "Usage: `explain mg-XXXX <what to explain>` (or `dr-XXXX`)"

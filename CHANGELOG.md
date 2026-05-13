@@ -5,6 +5,23 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.43.0] - 2026-05-13
+
+### Changed
+
+- The id-bearing commands (approve / reject / revise / explain / read /
+  dismiss / open) now accept any `<2+ lowercase letters>-<hex>` id
+  shape, not just `mg-` and `dr-`. Unblocks the user on the new
+  prefixes the mayor and director started emitting (`ds-` mayor
+  design, `rp-` director report, `pj-` project). `MG_ID_RE` is now
+  `r'^[a-z]+-[0-9a-f]+$'`; the four inline `mg-id` extractors in
+  `scan_pending_approvals` / `scan_pending_reports` /
+  `_inbox_top_list_should_hide` / `get_inbox_summary` use the same
+  generalized form. New `DESIGN_ID_RE` (`(mg|ds)-…`) keeps the
+  `read <design-id>` → `open` redirect scoped to design prefixes;
+  `read dr-XXXX` / `read rp-XXXX` / `read pj-XXXX` keep the
+  find_mails_for / design_doc fallthrough. (mg-f282)
+
 ## [4.42.0] - 2026-05-13
 
 ### Changed

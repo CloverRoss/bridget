@@ -178,8 +178,23 @@ def test_dismiss_accepts_mg_prefix(bridget, monkeypatch):
     assert 'mg-abcd' in reply
 
 
-def test_dismiss_rejects_unknown_prefix(bridget):
-    reply = bridget.handle_command('dismiss xx-abcd')
+@pytest.mark.parametrize('prefix', ['ds', 'rp', 'pj', 'xx'])
+def test_dismiss_accepts_any_letter_prefix(bridget, monkeypatch, prefix):
+    # post-mg-f282 any 2+-letter prefix routes through the dismiss path —
+    # mark_mail_read on an unknown id is harmless (it just moves zero
+    # mails). Hard-coding mg-/dr- only would block the new ds-/rp-/pj-
+    # families from being dismissed.
+    monkeypatch.setattr(bridget, 'mark_mail_read', lambda **_kwargs: 0)
+    monkeypatch.setattr(bridget, 'log_mail_action', lambda *_a, **_k: None)
+    reply = bridget.handle_command(f'dismiss {prefix}-abcd')
+    assert '✓' in reply
+    assert f'{prefix}-abcd' in reply
+
+
+def test_dismiss_rejects_non_id_arg(bridget):
+    # `dismiss notanid` still fails — argument must have the
+    # `<letters>-<rest>` id shape.
+    reply = bridget.handle_command('dismiss notanid')
     assert 'Usage' in reply
 
 

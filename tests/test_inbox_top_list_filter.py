@@ -114,19 +114,21 @@ def test_top_list_keeps_approval_mg_show_failure(bridget, monkeypatch):
     assert bridget._inbox_top_list_should_hide(p) is False
 
 
-def test_top_list_keeps_approval_subject_without_mg_id(bridget, monkeypatch):
-    # 'approval needed' subjects that lack a parseable mg-id (e.g. legacy
-    # dr-XXXX-only subjects) pass through — no id to check.
+def test_top_list_keeps_approval_subject_with_unknown_prefix_id(
+    bridget, monkeypatch,
+):
+    # post-mg-f282 the id regex matches any 2+-letter prefix; subjects
+    # carrying a non-mg id (dr-/ds-/rp-/pj-/…) now route through `mg show`,
+    # but the defensive `rc!=0`/`no Status:` paths still let the mail
+    # surface as a false positive (preferred over false negative).
     p = _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed dr-abcd')
-    called = []
 
     def fake(args):
-        called.append(args)
-        return 0, '', ''
+        # mg show on an unknown id returns rc!=0; _mg_item_closed returns
+        # False and the mail surfaces.
+        return 1, '', 'no such work item'
     monkeypatch.setattr(bridget, 'run_mg', fake)
     assert bridget._inbox_top_list_should_hide(p) is False
-    # And we didn't spawn mg show for a subject without an mg-id.
-    assert called == []
 
 
 # -- get_inbox_summary integration -----------------------------------------

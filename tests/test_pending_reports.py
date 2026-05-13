@@ -387,19 +387,18 @@ def test_scan_pending_reports_defensive_on_missing_status_line(bridget, monkeypa
     assert bridget.scan_pending_reports() == ['Report ready: mg-ffff']
 
 
-def test_scan_pending_reports_subject_without_mg_id_passes_through(bridget, monkeypatch):
-    # The original dr-XXXX subjects don't match the mg-id regex; no status
-    # check applies, mail still surfaces.
+def test_scan_pending_reports_subject_with_unknown_prefix_id_passes_through(
+    bridget, monkeypatch,
+):
+    # post-mg-f282 the id regex matches any 2+-letter prefix; dr-XXXX (and
+    # any other unrecognized-prefix subject) now routes through `mg show`,
+    # but the defensive `rc!=0` path leaves the mail surfaced.
     _write_mail(bridget.MAIL_DIR, '01.eml', 'Report ready: dr-abcd')
-    called = []
 
     def fake(args):
-        called.append(args)
-        return 0, '', ''
+        return 1, '', 'no such work item'
     monkeypatch.setattr(bridget, 'run_mg', fake)
     assert bridget.scan_pending_reports() == ['Report ready: dr-abcd']
-    # And we didn't even bother spawning mg show for a non-mg subject.
-    assert called == []
 
 
 def test_scan_pending_reports_mixed_shelved_and_available(bridget, monkeypatch):

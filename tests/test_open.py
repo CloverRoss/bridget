@@ -107,11 +107,18 @@ def test_open_non_mg_id_returns_usage(bridget):
     assert 'open mg-XXXX' in reply
 
 
-def test_open_dr_id_returns_usage(bridget):
-    # `open` is design-only (mg-id). dr- reports are out of scope; the regex
-    # restricts the prefix to `mg-`.
-    reply = bridget.handle_command('open dr-abcd')
-    assert 'Usage' in reply
+@pytest.mark.parametrize('prefix', ['mg', 'dr', 'ds', 'rp', 'pj'])
+def test_open_accepts_known_prefixes(bridget, monkeypatch, prefix):
+    # Post-mg-f282 the id-shape regex is prefix-agnostic so new work-item
+    # families (ds- designs, rp- reports, pj- projects) flow through the
+    # same code path without code changes per prefix.
+    monkeypatch.setattr(
+        bridget,
+        'run_mg',
+        lambda args: (0, f'ID:        {prefix}-abcd\nTitle:     t\n', ''),
+    )
+    reply = bridget.handle_command(f'open {prefix}-abcd')
+    assert reply == f'Notes app → Pogo Designs → **{prefix}-abcd: t**'
 
 
 def test_open_non_hex_chars_returns_usage(bridget):
@@ -120,13 +127,15 @@ def test_open_non_hex_chars_returns_usage(bridget):
 
 
 def test_open_does_not_invoke_mg_show_for_invalid_id(bridget, monkeypatch):
-    # Guard: validation rejects non-mg-ids before we shell out to `mg show`.
+    # Guard: validation rejects non-id-shape input before we shell out to
+    # `mg show`. (Note: any `<letters>-<hex>` shape is accepted by the
+    # regex now — `dr-abcd` is no longer rejected — see mg-f282.)
     def boom(_args):
         raise AssertionError('run_mg must not be called for invalid ids')
 
     monkeypatch.setattr(bridget, 'run_mg', boom)
     bridget.handle_command('open notanid')
-    bridget.handle_command('open dr-abcd')
+    bridget.handle_command('open mg-xyz!')
     bridget.handle_command('open')
 
 
