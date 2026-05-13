@@ -1166,6 +1166,34 @@ def _mg_item_closed(mg_id: str) -> bool:
     return m.group(1) in _CLOSED_MG_STATUSES
 
 
+def _clear_approval_mail(mg_id: str) -> int:
+    """Move matching 'approval needed mg_id' mails from human/new/ to human/cur/.
+
+    Narrow textual match: subject must start with 'Subject: approval needed '
+    and contain mg_id. Independent of mg state — the _mg_item_closed filter
+    in scan_pending_approvals stays as belt-and-suspenders.
+
+    Returns count moved. Defensive on IO errors; never crashes.
+    """
+    if not MAIL_DIR.exists():
+        return 0
+    cur_dir = MAIL_DIR.parent / 'cur'
+    cur_dir.mkdir(exist_ok=True)
+    moved = 0
+    for p in sorted(MAIL_DIR.iterdir()):
+        try:
+            for line in p.read_text().splitlines():
+                if line == '':
+                    break
+                if line.startswith('Subject: approval needed ') and mg_id in line:
+                    p.rename(cur_dir / p.name)
+                    moved += 1
+                    break
+        except Exception:
+            pass
+    return moved
+
+
 def scan_pending_approvals() -> list[str]:
     """Subjects of unread mails in human/new/ that are approval requests.
 
@@ -1396,7 +1424,8 @@ def handle_command(text: str) -> str | list[str]:
             '--body=approved via discord',
         ])
         if rc == 0:
-            n = mark_mail_read(mg_id=mg_id)
+            n = _clear_approval_mail(mg_id) + mark_mail_read(mg_id=mg_id)
+            log_mail_action('approve', mg_id=mg_id)
             tail = f" (cleared {n} related mail{'s' if n != 1 else ''})" if n else ''
             return f"✓ approve sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
@@ -1415,7 +1444,8 @@ def handle_command(text: str) -> str | list[str]:
             f'--body={reason}',
         ])
         if rc == 0:
-            n = mark_mail_read(mg_id=mg_id)
+            n = _clear_approval_mail(mg_id) + mark_mail_read(mg_id=mg_id)
+            log_mail_action('reject', mg_id=mg_id)
             tail = f" (cleared {n} related mail{'s' if n != 1 else ''})" if n else ''
             return f"✓ reject sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
@@ -1437,7 +1467,8 @@ def handle_command(text: str) -> str | list[str]:
             f'--body={feedback}',
         ])
         if rc == 0:
-            n = mark_mail_read(mg_id=mg_id)
+            n = _clear_approval_mail(mg_id) + mark_mail_read(mg_id=mg_id)
+            log_mail_action('revise', mg_id=mg_id)
             tail = f" (cleared {n} related mail{'s' if n != 1 else ''})" if n else ''
             return f"✓ revise sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"

@@ -5,6 +5,16 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.24.0] - 2026-05-13
+
+### Changed
+
+- Approve / reject / revise replies now clear the matching
+  approval-needed mail from human/new/ → human/cur/, preventing
+  the directory from growing without bound and removing the
+  soft-dependency on mg-show filtering for inbox cleanliness.
+  (mg-14da)
+
 ## [4.23.0] - 2026-05-13
 
 ### Added
