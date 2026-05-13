@@ -584,11 +584,17 @@ def fetch_mg_claims_by_assignee() -> dict[str, list[str]]:
 
 
 def _agent_has_pending_work(name: str) -> bool:
-    """True if `name` has any available mg item assigned OR any unread mail.
+    """True if `name` has any actionable available mg item assigned OR any
+    unread mail.
 
     Live query — drives the mg-3538 reclassification: a diagnose=stalled
     agent with no pending work is just quiet, not wedged on a work item,
     so it should render as idle rather than 🔴 stalled.
+
+    Type=project items don't count as actionable work — those are Roadmap
+    records managed by mayor, not individual agent to-dos. Without this
+    filter, director shows as stalled whenever its only assigned items
+    are Project records (mg-e528).
 
     Defensive: errors from either subcommand fall through to False rather
     than False-positive a wedge. The cost of missing a real wedge for one
@@ -605,8 +611,10 @@ def _agent_has_pending_work(name: str) -> bool:
             if not line:
                 continue
             try:
-                json.loads(line)
+                item = json.loads(line)
             except json.JSONDecodeError:
+                continue
+            if isinstance(item, dict) and item.get('type') == 'project':
                 continue
             return True
     rc, out, _ = run_mg(['mail', 'list', name])

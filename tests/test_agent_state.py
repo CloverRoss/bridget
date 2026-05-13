@@ -551,6 +551,62 @@ def test_agent_has_pending_work_skips_blank_lines_in_mg_list():
         assert bridget._agent_has_pending_work('architect') is True
 
 
+def test_agent_has_pending_work_excludes_project_only_items():
+    """Type=project items are Roadmap records managed by mayor, not
+    actionable agent to-dos. A project-only assignee list + empty mail
+    must NOT count as pending work (mg-e528: director false-stalled)."""
+    fake_out = (
+        '{"id":"mg-aaaa","assignee":"director","type":"project"}\n'
+        '{"id":"mg-bbbb","assignee":"director","type":"project"}\n'
+    )
+
+    def fake_run_mg(args):
+        if args[0] == 'list':
+            return (0, fake_out, '')
+        if args[0] == 'mail':
+            return (0, 'No unread messages for director\n', '')
+        return (1, '', 'unexpected')
+
+    with mock.patch.object(bridget, 'run_mg', side_effect=fake_run_mg):
+        assert bridget._agent_has_pending_work('director') is False
+
+
+def test_agent_has_pending_work_true_when_project_plus_actionable():
+    """A single non-project item among Projects is enough — the actionable
+    item is real work even if the rest are Roadmap records."""
+    fake_out = (
+        '{"id":"mg-aaaa","assignee":"director","type":"project"}\n'
+        '{"id":"mg-bbbb","assignee":"director","type":"report"}\n'
+    )
+    with mock.patch.object(bridget, 'run_mg', return_value=(0, fake_out, '')):
+        assert bridget._agent_has_pending_work('director') is True
+
+
+def test_agent_has_pending_work_true_for_typeless_items():
+    """Items without a `type` field (legacy or non-project default) still
+    count as actionable — the filter is strictly `type == 'project'`,
+    not a project-only allowlist."""
+    fake_out = '{"id":"mg-cccc","assignee":"architect"}\n'
+    with mock.patch.object(bridget, 'run_mg', return_value=(0, fake_out, '')):
+        assert bridget._agent_has_pending_work('architect') is True
+
+
+def test_agent_has_pending_work_project_only_plus_unread_mail_is_true():
+    """Project-only mg list but unread mail → still has work. The mail
+    branch must run after the mg-list loop skips all-project items."""
+    fake_out = '{"id":"mg-aaaa","assignee":"director","type":"project"}\n'
+
+    def fake_run_mg(args):
+        if args[0] == 'list':
+            return (0, fake_out, '')
+        if args[0] == 'mail':
+            return (0, '1 unread message for director\n  m1  mg-9dea  hi\n', '')
+        return (1, '', 'unexpected')
+
+    with mock.patch.object(bridget, 'run_mg', side_effect=fake_run_mg):
+        assert bridget._agent_has_pending_work('director') is True
+
+
 def test_agent_has_pending_work_calls_mg_list_with_assignee_filter():
     """Live query must scope by assignee so cross-agent items don't
     false-positive a wedge."""

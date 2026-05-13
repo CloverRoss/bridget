@@ -5,6 +5,16 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.37.0] - 2026-05-13
+
+### Fixed
+
+- `_agent_has_pending_work` now excludes `type=project` items from the
+  actionable-work check. Project items are Product-Roadmap records
+  managed by mayor, not individual agent to-dos. Fixes director
+  showing as stalled when its only assigned items are Project records.
+  (mg-e528)
+
 ## [4.36.0] - 2026-05-13
 
 ### Added
