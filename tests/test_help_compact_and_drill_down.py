@@ -42,6 +42,12 @@ def _load_bridget(home: Path):
 @pytest.fixture
 def bridget(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
+    # These tests cover the full compact-menu shape and the COMMAND_LIST
+    # derived constant. Under the mg-5059 profile gate the laptop default
+    # hides Robin-only commands; opt into 'robin' so every entry in
+    # COMMANDS is visible (gate-specific behavior lives in
+    # tests/test_profile_gate.py).
+    monkeypatch.setenv('BRIDGET_PROFILE', 'robin')
     return _load_bridget(tmp_path)
 
 

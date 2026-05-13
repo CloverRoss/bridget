@@ -132,6 +132,25 @@ LIBRARIAN_DATA_DIR_DEFAULT = HOME / 'DUGLocal' / 'confluence-ingestion' / 'data'
 LIBRARIAN_SEARCH_OUTPUT_LIMIT = 1500
 LIBRARIAN_SEARCH_TIMEOUT = 10
 
+# Profile gate (mg-5059): Robin (DO bridget) and laptop bridget share the same
+# codebase; BRIDGET_PROFILE selects which command set is exposed. Default is
+# 'laptop' (omits Robin-only commands from help + verb dispatch). Robin sets
+# BRIDGET_PROFILE=robin in its bridget.env to unlock the full set.
+BRIDGET_PROFILE = os.environ.get('BRIDGET_PROFILE', 'laptop').lower()
+ROBIN_ONLY_COMMANDS = frozenset({'librarian sync', 'librarian search', 'spend'})
+
+
+def _is_robin_only(name: str) -> bool:
+    return name in ROBIN_ONLY_COMMANDS
+
+
+def _robin_only_reply(verb: str) -> str:
+    return (
+        f"`{verb}` is a Robin (DO bridget) command; "
+        f"not available on this laptop bridget"
+    )
+
+
 COMMANDS = [
     {
         'name': 'approve',
@@ -282,9 +301,14 @@ COMMANDS = [
 
 # Derived constants. COMMAND_LIST is kept for back-compat with the startup
 # DM at watch_mailbox() and existing tests that grep substrings out of the
-# joined bullet form.
+# joined bullet form. VISIBLE_COMMANDS hides Robin-only entries unless
+# BRIDGET_PROFILE=robin (mg-5059).
+VISIBLE_COMMANDS = [
+    c for c in COMMANDS
+    if BRIDGET_PROFILE == 'robin' or not _is_robin_only(c['name'])
+]
 COMMAND_LIST = '\n'.join(
-    f"• `{c['signature']}` — {c['description']}" for c in COMMANDS
+    f"• `{c['signature']}` — {c['description']}" for c in VISIBLE_COMMANDS
 )
 COMMANDS_BY_NAME = {c['name']: c for c in COMMANDS}
 
@@ -1731,6 +1755,15 @@ def handle_command(text: str) -> str | list[str]:
     text = text.strip()
     low = text.lower()
 
+    # Profile gate (mg-5059): short-circuit Robin-only verbs when running as
+    # laptop bridget. 'help <robin-only>' is handled separately in the help
+    # branch below, since that input begins with 'help' rather than the gated
+    # verb itself.
+    if BRIDGET_PROFILE != 'robin':
+        for _verb in ROBIN_ONLY_COMMANDS:
+            if low == _verb or low.startswith(_verb + ' '):
+                return _robin_only_reply(_verb)
+
     if re.match(r'^approve [a-z]+-', low):
         parts = text.split(None, 1)
         mg_id = parts[1] if len(parts) > 1 else ''
@@ -2041,13 +2074,15 @@ def handle_command(text: str) -> str | list[str]:
 
     if low in ('help', '?', 'commands'):
         lines = ['**Commands:**']
-        for c in COMMANDS:
+        for c in VISIBLE_COMMANDS:
             lines.append(f"• `{c['signature']}`")
         lines.append('')
         lines.append('Type `help <command>` for details on any one.')
         return '\n'.join(lines)
     if low.startswith('help '):
         name = text.split(None, 1)[1].strip().lower()
+        if BRIDGET_PROFILE != 'robin' and _is_robin_only(name):
+            return _robin_only_reply(name)
         c = COMMANDS_BY_NAME.get(name)
         if not c:
             return f"Unknown command `{name}`; type `help` for the menu."

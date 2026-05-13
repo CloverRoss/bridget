@@ -5,6 +5,22 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.45.0] - 2026-05-13
+
+### Added
+
+- `BRIDGET_PROFILE` env var (`laptop` default, `robin` opt-in) gates the
+  Robin (DO bridget) command set — `librarian sync`, `librarian search`,
+  and `spend`. On `laptop` (the default), these are omitted from the
+  `help` menu, the startup-DM `COMMAND_LIST`, and any drill-down via
+  `help <cmd>`; the verb parser short-circuits with
+  `` `<verb>` is a Robin (DO bridget) command; not available on this
+  laptop bridget``. When Robin's `bridget.env` sets
+  `BRIDGET_PROFILE=robin`, the same binary exposes the full command
+  set. Forward-compatible with mg-af2b / mg-84c4 Robin standup. The
+  `bridget.env.example` Optional section documents the toggle.
+  (mg-5059 / mg-6861 follow-on)
+
 ## [4.44.0] - 2026-05-13
 
 ### Added

@@ -48,6 +48,9 @@ def _load_bridget(home: Path):
 def bridget(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     monkeypatch.delenv('CONFLUENCE_DATA_DIR', raising=False)
+    # librarian search is Robin-only on laptop (mg-5059); these tests cover
+    # the underlying handler, so opt into the robin profile.
+    monkeypatch.setenv('BRIDGET_PROFILE', 'robin')
     return _load_bridget(tmp_path)
 
 
