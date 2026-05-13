@@ -1844,7 +1844,12 @@ def handle_command(text: str) -> str | list[str]:
             f'--subject=explain {mg_id}',
             f'--body={topic}',
         ])
-        return f"✓ explain request sent: `{mg_id}`" if rc == 0 else f"✗ failed: {err or out}"
+        if rc == 0:
+            n = _clear_approval_mail(mg_id) + mark_mail_read(mg_id=mg_id)
+            log_mail_action('explain', mg_id=mg_id)
+            tail = f" (cleared {n} related mail{'s' if n != 1 else ''})" if n else ''
+            return f"✓ explain request sent: `{mg_id}`{tail}"
+        return f"✗ failed: {err or out}"
 
     if low == 'agents' or low == 'agent list' or low == 'crew':
         rc, out, err = run_pogo(['agent', 'list', '--json'])

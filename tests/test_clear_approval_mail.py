@@ -173,5 +173,36 @@ def test_approve_mg_leaves_unrelated_approval_mail(bridget, monkeypatch):
     assert not (cur_dir / '02.eml').exists()
 
 
+def test_explain_mg_moves_matching_approval_mail(bridget, monkeypatch):
+    # mg-f7b5: explain verb now clears matching approval-needed mail too.
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-aaaa')
+    monkeypatch.setattr(bridget, 'run_mg', _fake_mg_idea)
+    reply = bridget.handle_command('explain mg-aaaa what is this about')
+    assert '✓' in reply
+    cur_dir = bridget.MAIL_DIR.parent / 'cur'
+    assert (cur_dir / '01.eml').exists()
+    assert not (bridget.MAIL_DIR / '01.eml').exists()
+
+
+def test_explain_mg_reply_reports_cleared_count(bridget, monkeypatch):
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-aaaa')
+    monkeypatch.setattr(bridget, 'run_mg', _fake_mg_idea)
+    reply = bridget.handle_command('explain mg-aaaa why')
+    assert 'cleared 1 related mail' in reply
+
+
+def test_explain_mg_leaves_unrelated_approval_mail(bridget, monkeypatch):
+    # Explaining mg-aaaa must not clear mg-bbbb's approval-needed mail.
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'approval needed mg-aaaa')
+    _write_mail(bridget.MAIL_DIR, '02.eml', 'approval needed mg-bbbb')
+    monkeypatch.setattr(bridget, 'run_mg', _fake_mg_idea)
+    reply = bridget.handle_command('explain mg-aaaa why')
+    assert '✓' in reply
+    cur_dir = bridget.MAIL_DIR.parent / 'cur'
+    assert (cur_dir / '01.eml').exists()
+    assert (bridget.MAIL_DIR / '02.eml').exists()
+    assert not (cur_dir / '02.eml').exists()
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))

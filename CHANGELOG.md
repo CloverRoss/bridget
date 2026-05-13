@@ -5,6 +5,18 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.34.0] - 2026-05-13
+
+### Changed
+
+- `explain mg-XXXX <topic>` now clears the matching
+  `approval needed` mail from human/new/ → human/cur/ on success,
+  matching the approve/reject/revise behavior shipped in mg-ae6f.
+  Reply text reports the cleared count (`(cleared N related mail...)`)
+  when non-zero. Inbox = actionables only; sending an explain
+  request is itself an action on the approval item.
+  (mg-f7b5)
+
 ## [4.33.0] - 2026-05-13
 
 ### Fixed
