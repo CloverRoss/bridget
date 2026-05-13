@@ -5,6 +5,16 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.44.0] - 2026-05-13
+
+### Added
+
+- `kickoff pj-XXXX` verb. Routes to mayor mailbox; mayor transitions
+  pj- from `ready-for-kickoff` → `in-progress`. Restricted to the
+  `pj-` prefix (projects only) — legacy `mg-` projects must be edited
+  manually. `kickoff mg-XXXX`, `kickoff <non-id>`, and `kickoff` (no
+  arg) all bounce without sending mail. (ds-1482 / mg-8925)
+
 ## [4.43.0] - 2026-05-13
 
 ### Changed
