@@ -5,6 +5,15 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.35.0] - 2026-05-13
+
+### Changed
+
+- `bridget nudge` command now passes `--immediate` to `pogo nudge` so
+  the message always lands without waiting for the agent to be idle.
+  Fixes the case where nudging a busy mayor times out.
+  (mg-cb95)
+
 ## [4.34.0] - 2026-05-13
 
 ### Changed

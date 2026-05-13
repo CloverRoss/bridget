@@ -1879,7 +1879,7 @@ def handle_command(text: str) -> str | list[str]:
             return 'Usage: nudge <agent-name> [reason]'
         agent_name = parts[1]
         reason = parts[2] if len(parts) > 2 else 'status check'
-        rc, out, err = run_pogo(['nudge', agent_name, reason])
+        rc, out, err = run_pogo(['nudge', '--immediate', agent_name, reason])
         if rc != 0:
             return f'✗ nudge failed: {err or out}'
         success = f'✓ nudged {agent_name}: "{reason}"'
