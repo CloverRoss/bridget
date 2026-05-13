@@ -5,6 +5,16 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.30.0] - 2026-05-13
+
+### Fixed
+
+- Projects bucket: canonical 5-state tags (scheduled /
+  ready-for-kickoff / done / cancelled) now take precedence over
+  the legacy in-progress signal (kickoff-done). Fixes the case
+  where a Project has both canonical and legacy tags during the
+  mg-1d2b Phase 4 transition window. (mg-5f78)
+
 ## [4.29.0] - 2026-05-13
 
 ### Changed

@@ -1368,6 +1368,13 @@ _PROJECT_TAGS = frozenset({
 # director-rewrite cascade standardizes on 'in-progress'.
 _IN_PROGRESS_TAGS = frozenset({'in-progress', 'kickoff-done'})
 
+# Canonical 5-state vocab tags that signal NOT actively running.
+# Take precedence over legacy in-progress signals (kickoff-done) —
+# during the mg-1d2b Phase 4 transition window mayor may apply both.
+_CANONICAL_NOT_RUNNING = frozenset({
+    'scheduled', 'ready-for-kickoff', 'done', 'cancelled',
+})
+
 # mg item-type → status section. Anything not listed falls into "Other".
 _TYPE_TO_SECTION = {
     'report': 'Reports',
@@ -1398,6 +1405,8 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
         if item_type == 'report' and 'approved' in tags:
             continue
         if item_type == 'project':
+            if _CANONICAL_NOT_RUNNING & tags:
+                continue  # canonical state says not-running; hide
             if _IN_PROGRESS_TAGS & tags:
                 buckets['Projects'].append(item)
             continue  # non-in-progress projects: hidden (live on Roadmap)

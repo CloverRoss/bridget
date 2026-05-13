@@ -106,6 +106,24 @@ def test_project_with_kickoff_done_and_other_lifecycle_tags_buckets_into_project
     assert buckets['Designs'] == []
 
 
+def test_project_with_scheduled_and_kickoff_done_is_hidden(bridget):
+    # mg-5f78 bug repro: during the mg-1d2b Phase 4 transition window
+    # mayor may stamp both canonical 'scheduled' and legacy 'kickoff-done'
+    # on the same Project. Canonical state wins — item is hidden.
+    items = [{'id': 'mg-79e8', 'type': 'project',
+              'tags': ['scheduled', 'kickoff-done']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+
+
+def test_project_with_done_and_in_progress_is_hidden(bridget):
+    # Canonical 'done' takes precedence over in-progress signal.
+    items = [{'id': 'mg-4444', 'type': 'project',
+              'tags': ['done', 'in-progress']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+
+
 # -- categorize_in_flight: legacy Type=idea suppression --------------------
 
 def test_legacy_idea_with_in_progress_is_hidden(bridget):
