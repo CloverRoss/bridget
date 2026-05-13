@@ -5,6 +5,20 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.40.0] - 2026-05-13
+
+### Fixed
+
+- `read_design` now logs the actual exception class + message on IO
+  failure (closes the post-mg-5dd7 "file missing or unreadable"
+  opacity; the previous catch silently returned None). On missing
+  files it also performs a best-effort `brctl download` to
+  materialize iCloud-Drive placeholders before giving up — the
+  hypothesised root cause for `open mg-XXXX` returning "design not
+  found" when the file is visible at the iCloud path but stored as
+  a placeholder. The brctl fallback is a no-op on hosts without
+  `brctl` (non-macOS, stripped images). (mg-7d54 / mg-b5e5)
+
 ## [4.39.0] - 2026-05-13
 
 ### Added

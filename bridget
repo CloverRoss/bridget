@@ -1097,6 +1097,24 @@ MG_ID_RE = re.compile(r'^mg-[0-9a-f]+$')
 OPEN_BODY_LIMIT = 1700
 
 
+def _materialize_icloud(path: Path) -> None:
+    """Best-effort: ask CloudDocsd to download an iCloud placeholder.
+
+    No-op if `brctl` isn't on PATH (non-macOS hosts, stripped images) or if
+    the file isn't an iCloud placeholder. Silent on failure — caller re-checks
+    `path.exists()` afterwards.
+    """
+    if not shutil.which('brctl'):
+        return
+    try:
+        subprocess.run(
+            ['brctl', 'download', str(path)],
+            capture_output=True, timeout=10,
+        )
+    except Exception:
+        pass
+
+
 def read_design(mg_id: str) -> dict | None:
     """Return {'title': str|None, 'status': str|None, 'body': str} for a
     design, or None if the file is missing/unreadable. Defensive against
@@ -1104,9 +1122,28 @@ def read_design(mg_id: str) -> dict | None:
     rather than crashing the handler.
     """
     path = DESIGNS_DIR / f'{mg_id}.md'
+    if not path.exists():
+        # Designs live under iCloud Drive; a launchd-spawned bridget can see
+        # placeholder dentries that read_text() rejects with ENOENT. Nudge
+        # CloudDocsd to materialize, then re-check before giving up.
+        _materialize_icloud(path)
+        if not path.exists():
+            return None
     try:
         text = path.read_text()
-    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError) as e:
+        print(
+            f'bridget: read_design IO error for {mg_id}: '
+            f'{type(e).__name__}: {e}',
+            file=sys.stderr,
+        )
+        return None
+    except Exception as e:
+        print(
+            f'bridget: read_design unexpected error for {mg_id}: '
+            f'{type(e).__name__}: {e}',
+            file=sys.stderr,
+        )
         return None
     try:
         m = FRONTMATTER_RE.match(text)

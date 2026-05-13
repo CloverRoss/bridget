@@ -3,6 +3,8 @@
 Covers:
 - read_design_doc / read_design_status frontmatter handling (helpers reused
   by both `read dr-XXXX` and `open mg-XXXX`).
+- read_design IO error reporting + iCloud-placeholder materialization
+  (mg-b5e5).
 - chunk_for_discord boundary splitting + truncation footer.
 - handle_command's `read` branch after mg-d3d7 tightening:
   - `read mg-XXXX` short-circuits to a hint pointing at `open`.
@@ -81,6 +83,136 @@ def test_read_design_status_reads_frontmatter(bridget):
 def test_read_design_status_returns_none_without_frontmatter(bridget):
     (bridget.DESIGNS_DIR / 'mg-dddd.md').write_text('# plain\nbody\n')
     assert bridget.read_design_status('mg-dddd') is None
+
+
+# -- read_design IO + iCloud handling (mg-b5e5) ----------------------------
+
+def test_read_design_happy_path_returns_dict_and_no_log(bridget, capsys):
+    (bridget.DESIGNS_DIR / 'mg-1111.md').write_text(
+        '---\nstatus: awaiting-approval\ntitle: T\n---\n# Body\n'
+    )
+    design = bridget.read_design('mg-1111')
+    assert design is not None
+    assert design['status'] == 'awaiting-approval'
+    err = capsys.readouterr().err
+    assert 'read_design' not in err
+
+
+def test_read_design_missing_file_logs_nothing_and_returns_none(bridget, capsys):
+    # Missing file: path.exists() short-circuit returns None silently — the
+    # diagnostic log is reserved for IO-error surprises, not the common case.
+    assert bridget.read_design('mg-nope') is None
+    err = capsys.readouterr().err
+    assert 'read_design' not in err
+
+
+def test_read_design_file_not_found_logs_exception_class(bridget, capsys, monkeypatch):
+    # path.exists() returns True but read_text raises FileNotFoundError —
+    # the iCloud-placeholder symptom we're hunting.
+    path = bridget.DESIGNS_DIR / 'mg-2222.md'
+    path.write_text('# placeholder shell\n')
+    monkeypatch.setattr(
+        bridget.Path,
+        'read_text',
+        lambda self, *a, **kw: (_ for _ in ()).throw(FileNotFoundError('ENOENT')),
+    )
+    assert bridget.read_design('mg-2222') is None
+    err = capsys.readouterr().err
+    assert 'read_design IO error for mg-2222' in err
+    assert 'FileNotFoundError' in err
+
+
+def test_read_design_permission_error_logs_exception_class(bridget, capsys, monkeypatch):
+    path = bridget.DESIGNS_DIR / 'mg-3333.md'
+    path.write_text('# x\n')
+    monkeypatch.setattr(
+        bridget.Path,
+        'read_text',
+        lambda self, *a, **kw: (_ for _ in ()).throw(PermissionError('EACCES')),
+    )
+    assert bridget.read_design('mg-3333') is None
+    err = capsys.readouterr().err
+    assert 'read_design IO error for mg-3333' in err
+    assert 'PermissionError' in err
+
+
+def test_read_design_unexpected_error_logs_under_unexpected_branch(bridget, capsys, monkeypatch):
+    path = bridget.DESIGNS_DIR / 'mg-4444.md'
+    path.write_text('# x\n')
+    monkeypatch.setattr(
+        bridget.Path,
+        'read_text',
+        lambda self, *a, **kw: (_ for _ in ()).throw(RuntimeError('weird')),
+    )
+    assert bridget.read_design('mg-4444') is None
+    err = capsys.readouterr().err
+    assert 'read_design unexpected error for mg-4444' in err
+    assert 'RuntimeError' in err
+
+
+def test_read_design_brctl_materializes_icloud_placeholder(bridget, capsys, monkeypatch):
+    # path.exists() is False initially, then True after _materialize_icloud
+    # runs. Simulates an iCloud placeholder dentry that CloudDocsd downloads
+    # on demand.
+    designs = bridget.DESIGNS_DIR
+    target = designs / 'mg-5555.md'
+    state = {'materialized': False}
+
+    real_exists = bridget.Path.exists
+
+    def fake_exists(self):
+        if self == target and not state['materialized']:
+            return False
+        return real_exists(self)
+
+    def fake_materialize(path):
+        state['materialized'] = True
+        target.write_text('---\nstatus: drafted\n---\n# ok\n')
+
+    monkeypatch.setattr(bridget.Path, 'exists', fake_exists)
+    monkeypatch.setattr(bridget, '_materialize_icloud', fake_materialize)
+
+    design = bridget.read_design('mg-5555')
+    assert design is not None
+    assert design['status'] == 'drafted'
+
+
+def test_read_design_brctl_giving_up_returns_none_silently(bridget, capsys, monkeypatch):
+    # path.exists() stays False even after _materialize_icloud — caller
+    # gives up without logging (the missing-file path is the silent one).
+    designs = bridget.DESIGNS_DIR
+    target = designs / 'mg-6666.md'
+    calls = {'n': 0}
+
+    real_exists = bridget.Path.exists
+
+    def fake_exists(self):
+        if self == target:
+            return False
+        return real_exists(self)
+
+    def fake_materialize(path):
+        calls['n'] += 1
+
+    monkeypatch.setattr(bridget.Path, 'exists', fake_exists)
+    monkeypatch.setattr(bridget, '_materialize_icloud', fake_materialize)
+
+    assert bridget.read_design('mg-6666') is None
+    assert calls['n'] == 1
+    err = capsys.readouterr().err
+    assert 'read_design' not in err
+
+
+def test_materialize_icloud_no_op_when_brctl_missing(bridget, monkeypatch):
+    # On a host without brctl (linux CI, stripped image) the helper is a
+    # silent no-op — never spawns subprocess.
+    monkeypatch.setattr(bridget.shutil, 'which', lambda _: None)
+
+    def boom(*a, **kw):
+        raise AssertionError('subprocess.run must not be called when brctl absent')
+
+    monkeypatch.setattr(bridget.subprocess, 'run', boom)
+    bridget._materialize_icloud(bridget.DESIGNS_DIR / 'mg-7777.md')
 
 
 # -- chunk_for_discord ------------------------------------------------------
