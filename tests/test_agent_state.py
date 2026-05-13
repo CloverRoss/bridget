@@ -74,13 +74,16 @@ def _clear_status(name: str) -> None:
 
 @pytest.mark.parametrize('health,expected_state', [
     ('idle',    'idle'),
-    ('stalled', 'stalled'),
+    ('stalled', 'stalled'),  # with work; stalled-no-work covered separately (mg-3538)
     ('exited',  'offline'),
     ('dead',    'offline'),  # mg-9939: dead → offline (was stalled)
 ])
 def test_state_from_diag_maps_non_healthy_values(health, expected_state):
     _clear_status('agent-x')
-    out = bridget._state_from_diag('agent-x', {'health': health, 'idle_duration': '5m'})
+    # Stalled now consults a live work check (mg-3538); mock work-present
+    # so this test exercises the original stalled→stalled mapping branch.
+    with mock.patch.object(bridget, '_agent_has_pending_work', return_value=True):
+        out = bridget._state_from_diag('agent-x', {'health': health, 'idle_duration': '5m'})
     assert out['state'] == expected_state
     assert out['health_raw'] == health
     assert out['idle_duration'] == '5m'
@@ -91,10 +94,11 @@ def test_state_from_diag_non_healthy_ignores_json_state():
     """A fresh JSON saying 'busy: …' must not flip a stalled/exited/dead
     agent into busy. Only `healthy` consults the JSON tiebreaker."""
     _write_status('worker', {'state': 'busy: drafting mg-9dea'}, age_seconds=5)
-    for health, expected in [('stalled', 'stalled'), ('exited', 'offline'), ('dead', 'offline')]:
-        out = bridget._state_from_diag('worker', {'health': health})
-        assert out['state'] == expected, f'{health} should map to {expected}'
-        assert out['badge'] is None, f'{health} should not carry the JSON badge'
+    with mock.patch.object(bridget, '_agent_has_pending_work', return_value=True):
+        for health, expected in [('stalled', 'stalled'), ('exited', 'offline'), ('dead', 'offline')]:
+            out = bridget._state_from_diag('worker', {'health': health})
+            assert out['state'] == expected, f'{health} should map to {expected}'
+            assert out['badge'] is None, f'{health} should not carry the JSON badge'
 
 
 def test_state_from_diag_unknown_health_treated_as_stalled(capsys):
@@ -218,14 +222,15 @@ def test_compute_agent_state_diagnose_json_parse_error_returns_stalled(capsys):
 @pytest.mark.parametrize('health,expected', [
     # 'healthy' is JSON-state-dependent — covered separately above.
     ('idle',    'idle'),
-    ('stalled', 'stalled'),
+    ('stalled', 'stalled'),  # with work; stalled-no-work covered separately (mg-3538)
     ('exited',  'offline'),
     ('dead',    'offline'),
 ])
 def test_compute_agent_state_full_loop_each_health(health, expected):
     _clear_status(f'agent-{health}')
     diag_out = json.dumps({'health': health, 'idle_duration': '0s'})
-    with mock.patch.object(bridget, 'run_pogo', return_value=(0, diag_out, '')):
+    with mock.patch.object(bridget, 'run_pogo', return_value=(0, diag_out, '')), \
+         mock.patch.object(bridget, '_agent_has_pending_work', return_value=True):
         out = bridget.compute_agent_state(f'agent-{health}')
     assert out['state'] == expected
     assert out['health_raw'] == health
@@ -331,11 +336,24 @@ def test_crew_idle_when_diagnose_idle():
 
 
 def test_crew_stalled_when_diagnose_stalled():
-    with _patch_diagnose('stalled'):
+    with _patch_diagnose('stalled'), \
+         mock.patch.object(bridget, '_agent_has_pending_work', return_value=True):
         result = bridget.agent_state(
             'architect', {'status': 'running', 'type': 'crew'}, {},
         )
     assert result == ('🔴', 'stalled', None)
+
+
+def test_crew_idle_when_diagnose_stalled_with_no_work():
+    """mg-3538: diagnose=stalled + no pending work → reclassify as idle.
+    Matches Clover's spec ('stalled = not responding to work items'). A
+    sleepy agent with an empty mg+mail queue is just quiet, not wedged."""
+    with _patch_diagnose('stalled'), \
+         mock.patch.object(bridget, '_agent_has_pending_work', return_value=False):
+        result = bridget.agent_state(
+            'architect', {'status': 'running', 'type': 'crew'}, {},
+        )
+    assert result == ('🟢', 'idle', None)
 
 
 def test_crew_offline_when_diagnose_exited():
@@ -443,6 +461,113 @@ def test_fetch_mg_claims_skips_blank_and_invalid_lines():
         assert bridget.fetch_mg_claims_by_assignee() == {
             'architect': ['mg-aaaa'],
         }
+
+
+# -- mg-3538: stalled-no-work reclassification ------------------------------
+# diagnose=stalled now consults live mg+mail queries. Stalled-with-work
+# stays 🔴 (real wedge); stalled-with-no-work reclassifies as 🟢 idle.
+
+def test_state_from_diag_stalled_with_no_work_reclassifies_as_idle():
+    """mg-3538: pogod says stalled, mg+mail both empty → render as idle.
+    health_raw becomes 'stalled (no work)' so the diagnose origin is
+    preserved (debuggable) while the user-visible state matches the
+    actual situation: nothing to do, not wedged."""
+    with mock.patch.object(bridget, '_agent_has_pending_work', return_value=False):
+        out = bridget._state_from_diag('quiet', {'health': 'stalled', 'idle_duration': '2h'})
+    assert out['state'] == 'idle'
+    assert out['health_raw'] == 'stalled (no work)'
+    assert out['badge'] is None
+    assert out['idle_duration'] == '2h'
+
+
+def test_state_from_diag_stalled_with_pending_work_stays_stalled():
+    """mg-3538: a stalled agent that DOES have queued work is a real wedge
+    — keep it 🔴 so the operator notices."""
+    with mock.patch.object(bridget, '_agent_has_pending_work', return_value=True):
+        out = bridget._state_from_diag('wedged', {'health': 'stalled', 'idle_duration': '2h'})
+    assert out['state'] == 'stalled'
+    assert out['health_raw'] == 'stalled'
+    assert out['badge'] is None
+
+
+# -- _agent_has_pending_work: live mg + mail query --------------------------
+
+def test_agent_has_pending_work_returns_true_when_mg_list_has_items():
+    """First available mg item short-circuits — no need to check mail."""
+    fake_out = '{"id":"mg-1234","assignee":"architect","status":"available"}\n'
+    calls = []
+
+    def fake_run_mg(args):
+        calls.append(args)
+        if args[0] == 'list':
+            return (0, fake_out, '')
+        return (0, 'should-not-reach-mail', '')
+
+    with mock.patch.object(bridget, 'run_mg', side_effect=fake_run_mg):
+        assert bridget._agent_has_pending_work('architect') is True
+    # mail list never queried — the mg-list hit was decisive.
+    assert all(c[0] != 'mail' for c in calls)
+
+
+def test_agent_has_pending_work_returns_true_when_mail_unread():
+    """Empty mg queue + unread mail → still has work."""
+    def fake_run_mg(args):
+        if args[0] == 'list':
+            return (0, '', '')
+        if args[0] == 'mail':
+            return (0, '1 unread message for architect\n  m1  mg-9dea  hello\n', '')
+        return (1, '', 'unexpected')
+
+    with mock.patch.object(bridget, 'run_mg', side_effect=fake_run_mg):
+        assert bridget._agent_has_pending_work('architect') is True
+
+
+def test_agent_has_pending_work_returns_false_when_both_empty():
+    """Empty mg queue + 'No unread messages' from mail → quiet, not wedged."""
+    def fake_run_mg(args):
+        if args[0] == 'list':
+            return (0, '', '')
+        if args[0] == 'mail':
+            return (0, 'No unread messages for architect\n', '')
+        return (1, '', 'unexpected')
+
+    with mock.patch.object(bridget, 'run_mg', side_effect=fake_run_mg):
+        assert bridget._agent_has_pending_work('architect') is False
+
+
+def test_agent_has_pending_work_returns_false_when_both_fail():
+    """Defensive: subcommand errors fall through to False rather than
+    false-positive a wedge. Missing a real wedge for one refresh tick is
+    cheaper than reporting every dead inbox as 🔴 stalled."""
+    with mock.patch.object(bridget, 'run_mg', return_value=(1, '', 'boom')):
+        assert bridget._agent_has_pending_work('architect') is False
+
+
+def test_agent_has_pending_work_skips_blank_lines_in_mg_list():
+    """mg list emits JSONL — blank lines and parse errors don't count as
+    work, but a single valid line does."""
+    fake_out = '\nnot-json\n{"id":"mg-1234","assignee":"architect"}\n'
+    with mock.patch.object(bridget, 'run_mg', return_value=(0, fake_out, '')):
+        assert bridget._agent_has_pending_work('architect') is True
+
+
+def test_agent_has_pending_work_calls_mg_list_with_assignee_filter():
+    """Live query must scope by assignee so cross-agent items don't
+    false-positive a wedge."""
+    captured = []
+
+    def fake_run_mg(args):
+        captured.append(args)
+        if args[0] == 'list':
+            return (0, '', '')
+        return (0, 'No unread messages\n', '')
+
+    with mock.patch.object(bridget, 'run_mg', side_effect=fake_run_mg):
+        bridget._agent_has_pending_work('architect')
+    list_call = next(c for c in captured if c[0] == 'list')
+    assert '--status=available' in list_call
+    assert '--assignee=architect' in list_call
+    assert '--json' in list_call
 
 
 if __name__ == '__main__':

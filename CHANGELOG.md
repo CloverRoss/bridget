@@ -5,6 +5,21 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.28.0] - 2026-05-13
+
+### Changed
+
+- `agents` no longer reports stalled-with-no-work as stalled;
+  reclassified as idle (matches user spec: "stalled = not
+  responding to work items"). When `pogo agent diagnose` returns
+  health=stalled, bridget now runs a live `mg list
+  --status=available --assignee=<name>` + `mg mail list <name>`
+  check: if both queues are empty the agent renders 🟢 idle
+  (health_raw='stalled (no work)' preserves the diagnose origin);
+  if either has items the agent stays 🔴 stalled (real wedge).
+  Reclassification uses live queries — true at query time, not
+  dependent on agent self-reports. (mg-3538)
+
 ## [4.27.0] - 2026-05-13
 
 ### Changed

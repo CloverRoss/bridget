@@ -63,9 +63,14 @@ AGENT_STATUS_FRESH = datetime.timedelta(seconds=120)
 # with the JSON-state tiebreaker (mg-9939): busy iff the agent's
 # self-reported state starts with 'busy:' and the JSON mtime is within
 # AGENT_STATUS_FRESH; otherwise idle.
+#
+# `stalled` is also handled specially in _state_from_diag (mg-3538): if the
+# agent has no available mg items and no unread mail, it's reclassified as
+# idle. The entry below is the fallback for callers that bypass the live
+# work check (currently none; kept for parity).
 HEALTH_TO_STATE = {
     'idle':    'idle',     # if pogod ever surfaces idle directly
-    'stalled': 'stalled',  # quiet longer than the per-agent threshold
+    'stalled': 'stalled',  # conditional on _agent_has_pending_work — see _state_from_diag
     'exited':  'offline',  # process has exited cleanly
     'dead':    'offline',  # registered as running but OS proc gone — wedge
 }
@@ -555,6 +560,38 @@ def fetch_mg_claims_by_assignee() -> dict[str, list[str]]:
     return by_assignee
 
 
+def _agent_has_pending_work(name: str) -> bool:
+    """True if `name` has any available mg item assigned OR any unread mail.
+
+    Live query — drives the mg-3538 reclassification: a diagnose=stalled
+    agent with no pending work is just quiet, not wedged on a work item,
+    so it should render as idle rather than 🔴 stalled.
+
+    Defensive: errors from either subcommand fall through to False rather
+    than False-positive a wedge. The cost of missing a real wedge for one
+    refresh tick is lower than reporting every dead inbox as stalled.
+
+    `mg list --json` emits JSONL (one item per line), not a JSON array —
+    matches the fetch_mg_claims_by_assignee parser, not the design's
+    `json.loads(out)` sketch which assumed a single array."""
+    rc, out, _ = run_mg(['list', '--status=available',
+                         f'--assignee={name}', '--json'])
+    if rc == 0:
+        for line in out.splitlines():
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            return True
+    rc, out, _ = run_mg(['mail', 'list', name])
+    if rc == 0 and out.strip() and 'No unread messages' not in out:
+        return True
+    return False
+
+
 def _read_fresh_status_raw(name: str) -> str | None:
     """Return the agent's self-reported `state` field from
     ~/.pogo/agent-status/<name>.json, IFF the file's mtime is within
@@ -587,7 +624,13 @@ def _state_from_diag(name: str, diag: dict) -> dict:
     `healthy` is the only health that consults the JSON: pogod's diagnose
     returns healthy for any alive crew agent, so the agent's self-reported
     state (fresh ≤ AGENT_STATUS_FRESH, prefix `busy:`) is the tiebreaker
-    between busy and idle (mg-9939)."""
+    between busy and idle (mg-9939).
+
+    `stalled` consults live mg+mail state (mg-3538): if the agent has no
+    available work and no unread mail, the agent is simply quiet and is
+    reclassified as idle (with health_raw='stalled (no work)' to preserve
+    the diagnose origin). Real wedges — stalled with pending work —
+    remain 🔴 stalled."""
     health = (diag.get('health') or '').lower()
     idle_duration = diag.get('idle_duration') or '?'
     if health == 'healthy':
@@ -602,6 +645,20 @@ def _state_from_diag(name: str, diag: dict) -> dict:
             }
         return {
             'state': 'idle',
+            'health_raw': health,
+            'badge': None,
+            'idle_duration': idle_duration,
+        }
+    if health == 'stalled':
+        if not _agent_has_pending_work(name):
+            return {
+                'state': 'idle',
+                'health_raw': 'stalled (no work)',
+                'badge': None,
+                'idle_duration': idle_duration,
+            }
+        return {
+            'state': 'stalled',
             'health_raw': health,
             'badge': None,
             'idle_duration': idle_duration,
