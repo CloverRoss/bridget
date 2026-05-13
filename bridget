@@ -121,8 +121,13 @@ COMMANDS = [
     },
     {
         'name': 'read',
-        'signature': 'read mg-XXXX (or dr-XXXX or m<N> from inbox listing)',
-        'description': 'show design doc / mail. `mN` indices come from the most recent `inbox` output and may shift if new mail arrives in between. (approval/Report mails stay unread until you reply with approve/reject/revise/explain)',
+        'signature': 'read m<N> (or dr-XXXX)',
+        'description': 'show a mail. `mN` indices come from the most recent `inbox` output and may shift if new mail arrives in between. for designs awaiting approval, use `open mg-XXXX` instead — `read mg-XXXX` only returns a hint. (approval/Report mails stay unread until you reply with approve/reject/revise/explain)',
+    },
+    {
+        'name': 'open',
+        'signature': 'open mg-XXXX',
+        'description': 'retrieve a design awaiting approval (use `read` for mail message-ids). only returns the design body when its frontmatter `status:` is `awaiting-approval`; any other status (approved, rejected, missing file, malformed frontmatter) returns `design not found`. long bodies truncate to ~1700 chars with a continuation footer pointing at the full doc under `~/Library/Mobile Documents/com~apple~CloudDocs/Pogo/designs/<id>.md`.',
     },
     {
         'name': 'idea:',
@@ -948,6 +953,43 @@ def run_shell(args: list[str], timeout: int = 30, cwd=None) -> tuple[int, str, s
 
 FRONTMATTER_RE = re.compile(r'\A---\s*\n.*?\n---\s*\n', re.DOTALL)
 FRONTMATTER_STATUS_RE = re.compile(r'^status:\s*(\S+)', re.MULTILINE)
+FRONTMATTER_TITLE_RE = re.compile(r'^title:\s*(.+)$', re.MULTILINE)
+
+# Canonical mg-id form used by the `open` command and the `read` mg-id
+# guard. Same case-insensitive hex shape mg/dr work-items emit elsewhere.
+MG_ID_RE = re.compile(r'^mg-[0-9a-f]+$')
+
+# Body truncation budget for `open` replies. Discord's per-message limit is
+# 2000; we leave headroom for the title header + the continuation footer.
+OPEN_BODY_LIMIT = 1700
+
+
+def read_design(mg_id: str) -> dict | None:
+    """Return {'title': str|None, 'status': str|None, 'body': str} for a
+    design, or None if the file is missing/unreadable. Defensive against
+    malformed frontmatter: any unexpected parsing exception returns None
+    rather than crashing the handler.
+    """
+    path = DESIGNS_DIR / f'{mg_id}.md'
+    try:
+        text = path.read_text()
+    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError):
+        return None
+    try:
+        m = FRONTMATTER_RE.match(text)
+        if not m:
+            return {'title': None, 'status': None, 'body': text.lstrip('\n')}
+        fm = m.group(0)
+        sm = FRONTMATTER_STATUS_RE.search(fm)
+        tm = FRONTMATTER_TITLE_RE.search(fm)
+        body = FRONTMATTER_RE.sub('', text, count=1).lstrip('\n')
+        return {
+            'title': tm.group(1).strip() if tm else None,
+            'status': sm.group(1) if sm else None,
+            'body': body,
+        }
+    except Exception:
+        return None
 
 
 def read_design_status(mg_id: str) -> str | None:
@@ -1414,10 +1456,10 @@ def handle_command(text: str) -> str | list[str]:
             mail = parse_mail(p.read_text())
         except Exception as e:
             return f"✗ failed to read m{n}: {e}"
-        haystack = (mail['subject'] + ' ' + mail['body']).lower()
-        ids = re.findall(r'mg-[0-9a-f]+', haystack)
-        if ids:
-            return handle_command(f'read {ids[0]}')
+        # mg-d3d7: `read m<N>` renders the mail directly. The mg-id-referencing
+        # mail no longer recurses through `read mg-XXXX` (which is now a hint
+        # redirect to `open`). If the user wants the linked design too, they
+        # send `open mg-XXXX` as a follow-up.
         subj = mail.get('subject', '')
         protected = any(subj.startswith(pre) for pre in PROTECTED_SUBJECT_PREFIXES)
         state = 'unread (action required)' if protected else 'unread'
@@ -1435,11 +1477,38 @@ def handle_command(text: str) -> str | list[str]:
             f"{mail['body']}"
         )
 
+    if low == 'open' or low.startswith('open '):
+        parts = text.split(None, 1)
+        usage = "Usage: `open mg-XXXX`"
+        if len(parts) < 2:
+            return usage
+        arg = parts[1].strip().lower()
+        if not MG_ID_RE.match(arg):
+            return usage
+        design = read_design(arg)
+        if design is None or design.get('status') != 'awaiting-approval':
+            return 'design not found'
+        title = design.get('title') or arg
+        body = design.get('body') or ''
+        footer = (
+            f"\n\n…(continued — full doc at "
+            f"~/Library/Mobile Documents/com~apple~CloudDocs/Pogo/designs/{arg}.md)"
+        )
+        if len(body) > OPEN_BODY_LIMIT:
+            body = body[:OPEN_BODY_LIMIT].rstrip() + footer
+        return f"**{title}** ({arg})\n\n{body}"
+
     if low.startswith('read mg-') or low.startswith('read dr-'):
         parts = text.split(None, 1)
         if len(parts) < 2:
             return "Usage: `read mg-XXXX` (or `dr-XXXX`)"
         mg_id = parts[1].strip()
+
+        if MG_ID_RE.match(mg_id.lower()):
+            return (
+                "`read` is for mail message-ids; "
+                "try `open mg-XXXX` for designs."
+            )
 
         matches = find_mails_for(mg_id)
         mail_footer = ''

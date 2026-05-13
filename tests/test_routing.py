@@ -204,11 +204,15 @@ def test_read_accepts_dr_prefix(bridget, monkeypatch):
     assert 'dr-abcd' in reply
 
 
-def test_read_accepts_mg_prefix(bridget, monkeypatch):
+def test_read_mg_prefix_hints_to_open(bridget, monkeypatch):
+    # mg-d3d7: `read mg-XXXX` no longer routes into the design/mail combined
+    # surface — it redirects users to `open mg-XXXX`. The prefix is still
+    # recognized (no Usage error), but the response is a hint.
     monkeypatch.setattr(bridget, 'find_mails_for', lambda _mg_id: [])
     reply = bridget.handle_command('read mg-abcd')
     assert 'Usage' not in reply
-    assert 'mg-abcd' in reply
+    assert 'open mg-XXXX' in reply
+    assert 'mail message-ids' in reply
 
 
 # -- COMMAND_LIST mentions both prefix forms --------------------------------

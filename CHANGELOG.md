@@ -5,6 +5,15 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.23.0] - 2026-05-13
+
+### Added
+
+- `open mg-XXXX` command to retrieve designs awaiting approval.
+  `read` now hints to use `open` when given an mg-id; mail
+  message-id behavior unchanged. Closes the mg-93cb confusion.
+  (mg-d3d7)
+
 ## [4.22.0] - 2026-05-13
 
 ### Changed
