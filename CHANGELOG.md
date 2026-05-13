@@ -5,6 +5,18 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.31.0] - 2026-05-13
+
+### Changed
+
+- `get_inbox_summary` top list now hides `approval needed` and
+  `Report ready:` mails for mg items whose status is
+  shelved/done/archived. Matches the same filtering Pending
+  approvals + Pending reports already apply at the bucket level,
+  so a stale Report/approval doesn't keep showing in the unread
+  count after its mg item closes. Plus a one-time admin cleanup
+  of 7 stale mails on 2026-05-13. (mg-472c)
+
 ## [4.30.0] - 2026-05-13
 
 ### Fixed

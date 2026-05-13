@@ -1312,11 +1312,43 @@ def scan_pending_reports() -> list[str]:
     return out
 
 
+def _inbox_top_list_should_hide(p) -> bool:
+    """True if mail file should be hidden from the top 'Unread mail to human' list.
+
+    Returns True only for approval/Report mails whose referenced mg-id has a
+    closed status (shelved/done/archived). Generic mails — anything not
+    matching the two protected subject prefixes — always pass through. Mirrors
+    the same filter scan_pending_approvals/scan_pending_reports apply at the
+    bucket level, so the top list and the bucket lists stay in sync.
+    """
+    try:
+        text = p.read_text()
+    except Exception:
+        return False
+    subj = None
+    for line in text.splitlines():
+        if line == '':
+            break
+        if line.startswith('Subject: '):
+            subj = line[len('Subject: '):]
+            break
+    if not subj:
+        return False
+    if not (subj.startswith('approval needed ') or
+            subj.startswith('Report ready:')):
+        return False
+    m = re.search(r'mg-[0-9a-f]+', subj)
+    if not m:
+        return False
+    return _mg_item_closed(m.group(0))
+
+
 def get_inbox_summary() -> str:
     """Decide queue: unread mail, pending approvals, pending Reports."""
     parts = []
 
-    unread = sorted(MAIL_DIR.iterdir()) if MAIL_DIR.exists() else []
+    unread_raw = sorted(MAIL_DIR.iterdir()) if MAIL_DIR.exists() else []
+    unread = [p for p in unread_raw if not _inbox_top_list_should_hide(p)]
     parts.append(f"📬 Unread mail to human: **{len(unread)}**")
 
     if unread:
