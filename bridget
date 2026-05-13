@@ -31,6 +31,9 @@ import re
 import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 
 HOME = Path.home()
@@ -188,6 +191,11 @@ COMMANDS = [
         'name': 'preapprove',
         'signature': 'preapprove [true [fast] | false]',
         'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
+    },
+    {
+        'name': 'spend',
+        'signature': 'spend',
+        'description': 'show live Anthropic token quota consumption. Probes the Anthropic API to read rate-limit headers (input + output token windows) and reports % used + when each window resets. Requires `ANTHROPIC_API_KEY` in `~/.pogo/bridget.env`. Costs ~1 token per probe. For historical spend, use Claude Code `/cost` or `mg spend`. Note: the API surfaces its own rate-limit windows (typically per-minute) — Claude Code subscription quotas (5-hour session, weekly) are not exposed via the API.',
     },
     {
         'name': 'help',
@@ -1409,6 +1417,119 @@ def get_status_summary() -> str:
     return out_str
 
 
+# ── spend: live Anthropic rate-limit probe ──────────────────────────────────
+# The Anthropic API returns rate-limit headers on every response. We make a
+# minimal probe (max_tokens=1) and parse the response headers. The API surfaces
+# input-tokens and output-tokens windows; the 5-hour session and weekly windows
+# from the original mg-cac7 mockup are Claude Code subscription concepts and
+# are not exposed via the API. See CHANGELOG for the documented limitation.
+
+QUOTA_PROBE_MODEL = 'claude-haiku-4-5-20251001'
+QUOTA_HEADER_KEYS = ('input-tokens', 'output-tokens')
+
+
+def _probe_anthropic_quota():
+    api_key = os.environ.get('ANTHROPIC_API_KEY')
+    if not api_key:
+        return None
+    req = urllib.request.Request(
+        'https://api.anthropic.com/v1/messages',
+        method='POST',
+        headers={
+            'x-api-key': api_key,
+            'anthropic-version': '2023-06-01',
+            'content-type': 'application/json',
+        },
+        data=json.dumps({
+            'model': QUOTA_PROBE_MODEL,
+            'max_tokens': 1,
+            'messages': [{'role': 'user', 'content': 'x'}],
+        }).encode(),
+    )
+    try:
+        resp = urllib.request.urlopen(req, timeout=10)
+        return _parse_quota_headers(dict(resp.headers))
+    except urllib.error.HTTPError as e:
+        # Even error responses carry rate-limit headers; salvage them if
+        # the limit was the cause. Otherwise surface the error.
+        try:
+            parsed = _parse_quota_headers(dict(e.headers))
+            if parsed:
+                return parsed
+        except Exception:
+            pass
+        return {'error': f'HTTP {e.code}: {e.reason}'}
+    except Exception as e:
+        return {'error': str(e)}
+
+
+def _parse_quota_headers(headers: dict) -> dict:
+    # Case-insensitive lookup. urllib's response.headers is already case-
+    # insensitive but plain dicts from tests aren't, so normalize.
+    lower = {k.lower(): v for k, v in headers.items()}
+    out = {}
+    for key in QUOTA_HEADER_KEYS:
+        limit = lower.get(f'anthropic-ratelimit-{key}-limit')
+        remaining = lower.get(f'anthropic-ratelimit-{key}-remaining')
+        reset = lower.get(f'anthropic-ratelimit-{key}-reset')
+        if limit is None or remaining is None:
+            continue
+        try:
+            out[key] = {
+                'limit': int(limit),
+                'remaining': int(remaining),
+                'reset': reset,
+            }
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _format_quota_duration(seconds: float) -> str:
+    seconds = max(0, int(seconds))
+    if seconds < 60:
+        return f'{seconds}s'
+    if seconds < 3600:
+        m, s = divmod(seconds, 60)
+        return f'{m}m {s}s' if s else f'{m}m'
+    if seconds < 86400:
+        h, rem = divmod(seconds, 3600)
+        m = rem // 60
+        return f'{h}h {m}m' if m else f'{h}h'
+    d, rem = divmod(seconds, 86400)
+    h = rem // 3600
+    return f'{d}d {h}h' if h else f'{d}d'
+
+
+def _format_quota(quota: dict, now: float | None = None) -> str:
+    if not quota:
+        return 'Quota probe returned no rate-limit headers.'
+    if now is None:
+        now = time.time()
+    labels = {'input-tokens': 'Input tokens', 'output-tokens': 'Output tokens'}
+    lines = ['Token quota:']
+    for key in QUOTA_HEADER_KEYS:
+        window = quota.get(key)
+        if not window:
+            continue
+        limit = window['limit']
+        remaining = window['remaining']
+        used = max(0, limit - remaining)
+        pct = (used * 100 // limit) if limit > 0 else 0
+        reset = window.get('reset')
+        if reset:
+            try:
+                reset_dt = _parse_iso_utc(reset)
+                refresh = _format_quota_duration(reset_dt.timestamp() - now)
+                tail = f' → refresh in {refresh}'
+            except (ValueError, TypeError):
+                tail = ''
+        else:
+            tail = ''
+        lines.append(f'  {labels[key]+":":<15} {pct}% used{tail}')
+    return '\n'.join(lines)
+
+
 def handle_command(text: str) -> str | list[str]:
     text = text.strip()
     low = text.lower()
@@ -1827,6 +1948,21 @@ def handle_command(text: str) -> str | list[str]:
             return usage
         save_preapproval({'enabled': False, 'fast': False})
         return "✓ pre-approval: disabled."
+
+    if low == 'spend' or low.startswith('spend '):
+        # Ignore any args — design reserves them for future use.
+        result = _probe_anthropic_quota()
+        if result is None:
+            return (
+                'API key not configured. Add `ANTHROPIC_API_KEY` to '
+                '`~/.pogo/bridget.env` to enable.'
+            )
+        if isinstance(result, dict) and 'error' in result:
+            return (
+                f"Quota probe failed: {result['error']}. "
+                f"Try again or check Claude Code directly."
+            )
+        return _format_quota(result)
 
     if low == 'inbox' or low.startswith('inbox '):
         summary = get_inbox_summary()

@@ -5,6 +5,23 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.26.0] - 2026-05-13
+
+### Added
+
+- `spend` command (DM `spend` to bridget) reports live Anthropic
+  rate-limit consumption. Probes `api.anthropic.com` with a
+  minimal `max_tokens=1` request and parses the response headers
+  for input-tokens + output-tokens windows (limit / remaining /
+  reset). Probe costs ~1 token. Requires `ANTHROPIC_API_KEY` in
+  `~/.pogo/bridget.env`; replies with a configuration hint when
+  unset. The original mg-cac7 mockup showed 5-hour session +
+  weekly windows, but those are Claude Code subscription
+  concepts and are not surfaced by the Anthropic API; per the
+  design's risk section we ship the per-window data the API
+  actually exposes. For historical spend, use Claude Code
+  `/cost` or `mg spend`. (mg-cac7, mg-79e8 P1 #10)
+
 ## [4.25.0] - 2026-05-13
 
 ### Changed
