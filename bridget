@@ -913,7 +913,7 @@ def run_mg(args: list[str]) -> tuple[int, str, str]:
 
 
 def route_recipient(mg_id: str) -> str:
-    """Mailbox for a human reply to mg_id. type=report → director; else architect."""
+    """Mailbox for a human reply: routes to the mg item's Assignee."""
     rc, out, err = run_mg(['show', mg_id])
     if rc != 0:
         print(
@@ -922,15 +922,15 @@ def route_recipient(mg_id: str) -> str:
             file=sys.stderr,
         )
         return 'architect'
-    m = re.search(r'^Type:\s+(\S+)', out, re.MULTILINE)
+    m = re.search(r'^Assignee:\s+(\S+)', out, re.MULTILINE)
     if not m:
         print(
-            f'route_recipient: no Type: line in mg show {mg_id}; '
+            f'route_recipient: no Assignee: line in mg show {mg_id}; '
             f'falling back to architect.',
             file=sys.stderr,
         )
         return 'architect'
-    return 'director' if m.group(1).strip() == 'report' else 'architect'
+    return m.group(1).strip()
 
 
 def run_pogo(args: list[str]) -> tuple[int, str, str]:

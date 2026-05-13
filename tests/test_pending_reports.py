@@ -232,7 +232,7 @@ def test_handle_command_approve_dr_clears_report_mail(bridget, monkeypatch):
 
     def fake_run_mg(args):
         if args[:1] == ['show']:
-            return 0, 'ID: dr-aaaa\nType: report\nStatus: available\n', ''
+            return 0, 'ID: dr-aaaa\nType: report\nAssignee: director\nStatus: available\n', ''
         if args[:2] == ['mail', 'send']:
             return 0, '', ''
         return 0, '', ''
@@ -248,7 +248,7 @@ def test_handle_command_revise_dr_clears_report_mail(bridget, monkeypatch):
 
     def fake_run_mg(args):
         if args[:1] == ['show']:
-            return 0, 'ID: dr-aaaa\nType: report\nStatus: available\n', ''
+            return 0, 'ID: dr-aaaa\nType: report\nAssignee: director\nStatus: available\n', ''
         if args[:2] == ['mail', 'send']:
             return 0, '', ''
         if args[:1] == ['unshelve']:

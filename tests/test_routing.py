@@ -1,9 +1,9 @@
-"""Tests for type=report routing + dr- prefix support.
+"""Tests for Assignee-based routing + dr- prefix support.
 
 Covers:
-- route_recipient() unit tests (mg show failure, missing Type line, type values).
-- 16-combo matrix for approve/reject/revise/explain × architect/director ×
-  mg-/dr- prefixes — verifies the mail send target.
+- route_recipient() unit tests (mg show failure, missing Assignee line, assignee values).
+- approve/reject/revise/explain × architect/director/mayor × mg-/dr- prefixes —
+  verifies the mail send target is the mg item's Assignee.
 - read/dismiss accept the dr- prefix (no routing logic, just prefix relaxation).
 """
 import importlib.util
@@ -52,66 +52,55 @@ def test_route_recipient_mg_show_failure_falls_back_to_architect(bridget, monkey
     assert 'mg-deadbeef' in err
 
 
-def test_route_recipient_no_type_line_falls_back_to_architect(bridget, monkeypatch, capsys):
+def test_route_recipient_no_assignee_line_falls_back_to_architect(bridget, monkeypatch, capsys):
     def fake_run_mg(args):
         return 0, 'ID: mg-1234\nTitle: something\nStatus: available\n', ''
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
     assert bridget.route_recipient('mg-1234') == 'architect'
     err = capsys.readouterr().err
-    assert 'no Type:' in err
+    assert 'no Assignee:' in err
 
 
-def test_route_recipient_type_report_routes_to_director(bridget, monkeypatch):
+def test_route_recipient_assignee_director_routes_to_director(bridget, monkeypatch):
+    # Type=report assigned to director → director (canonical case).
     def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: report\nStatus: available\n', ''
+        return 0, 'ID: mg-1\nType: report\nAssignee: director\nStatus: available\n', ''
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
     assert bridget.route_recipient('mg-1') == 'director'
 
 
-def test_route_recipient_type_report_with_surrounding_whitespace(bridget, monkeypatch):
+def test_route_recipient_assignee_architect_routes_to_architect(bridget, monkeypatch):
+    # Type=idea assigned to architect → architect.
+    def fake_run_mg(args):
+        return 0, 'ID: mg-1\nType: idea\nAssignee: architect\nStatus: available\n', ''
+    monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
+    assert bridget.route_recipient('mg-1') == 'architect'
+
+
+def test_route_recipient_assignee_mayor_routes_to_mayor(bridget, monkeypatch):
+    # Director-Flow handoff: Type=report reassigned to mayor → mayor (was previously
+    # misrouted to director under the Type=report heuristic).
+    def fake_run_mg(args):
+        return 0, 'ID: mg-1\nType: report\nAssignee: mayor\nStatus: available\n', ''
+    monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
+    assert bridget.route_recipient('mg-1') == 'mayor'
+
+
+def test_route_recipient_assignee_with_surrounding_whitespace(bridget, monkeypatch):
     # The regex captures up to whitespace; group(1).strip() handles trailing space.
-    # Test that "Type:  report  \n" still routes correctly (extra whitespace).
     def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType:   report\nStatus: available\n', ''
+        return 0, 'ID: mg-1\nAssignee:    director  \nStatus: available\n', ''
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
     assert bridget.route_recipient('mg-1') == 'director'
 
 
-def test_route_recipient_type_idea_routes_to_architect(bridget, monkeypatch):
+def test_route_recipient_returns_assignee_verbatim(bridget, monkeypatch):
+    # Whatever the Assignee field says is what gets returned — no hardcoded
+    # allowlist. Future agents (or polecat names) route automatically.
     def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: idea\nStatus: available\n', ''
+        return 0, 'ID: mg-1\nAssignee: some-future-agent\nStatus: available\n', ''
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1') == 'architect'
-
-
-def test_route_recipient_type_bug_routes_to_architect(bridget, monkeypatch):
-    def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: bug\nStatus: available\n', ''
-    monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1') == 'architect'
-
-
-def test_route_recipient_type_task_routes_to_architect(bridget, monkeypatch):
-    def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: task\nStatus: available\n', ''
-    monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1') == 'architect'
-
-
-def test_route_recipient_unknown_type_routes_to_architect(bridget, monkeypatch):
-    # Non-matching but valid type values (e.g. junk/typo) → architect (safe default).
-    def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: task-extra-junk\nStatus: available\n', ''
-    monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1') == 'architect'
-
-
-def test_route_recipient_case_sensitive_Report_routes_to_architect(bridget, monkeypatch):
-    # Strict equality — capital R or other casing must NOT match.
-    def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: Report\nStatus: available\n', ''
-    monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1') == 'architect'
+    assert bridget.route_recipient('mg-1') == 'some-future-agent'
 
 
 # -- handle_command routing matrix ------------------------------------------
@@ -122,16 +111,16 @@ def test_route_recipient_case_sensitive_Report_routes_to_architect(bridget, monk
 class FakeMg:
     """Captures every run_mg call, returns canned show output for 'show'."""
 
-    def __init__(self, show_type: str):
-        self.show_type = show_type
+    def __init__(self, show_assignee: str):
+        self.show_assignee = show_assignee
         self.calls: list[list[str]] = []
 
     def __call__(self, args):
         self.calls.append(list(args))
         if args and args[0] == 'show':
-            if self.show_type is None:
-                return 0, 'ID: mg-1\nStatus: available\n', ''  # no Type line
-            return 0, f'ID: mg-1\nType: {self.show_type}\nStatus: available\n', ''
+            if self.show_assignee is None:
+                return 0, 'ID: mg-1\nStatus: available\n', ''  # no Assignee line
+            return 0, f'ID: mg-1\nAssignee: {self.show_assignee}\nStatus: available\n', ''
         if args and args[0:2] == ['mail', 'send']:
             return 0, '', ''
         if args and args[0] == 'unshelve':
@@ -151,15 +140,14 @@ class FakeMg:
     ('revise', ' tweak this'),
     ('explain', ' the part about X'),
 ])
-@pytest.mark.parametrize('show_type,expected_target', [
-    ('idea', 'architect'),
-    ('bug', 'architect'),
-    ('task', 'architect'),
-    ('report', 'director'),
+@pytest.mark.parametrize('assignee,expected_target', [
+    ('architect', 'architect'),
+    ('director', 'director'),
+    ('mayor', 'mayor'),
 ])
 @pytest.mark.parametrize('prefix', ['mg-', 'dr-'])
-def test_routed_commands_matrix(bridget, monkeypatch, verb, extra, show_type, expected_target, prefix):
-    fake = FakeMg(show_type=show_type)
+def test_routed_commands_matrix(bridget, monkeypatch, verb, extra, assignee, expected_target, prefix):
+    fake = FakeMg(show_assignee=assignee)
     monkeypatch.setattr(bridget, 'run_mg', fake)
     # mark_mail_read writes to disk under HOME; harmless but ignore the count.
     monkeypatch.setattr(bridget, 'mark_mail_read', lambda **_kwargs: 0)
@@ -167,7 +155,7 @@ def test_routed_commands_matrix(bridget, monkeypatch, verb, extra, show_type, ex
     reply = bridget.handle_command(cmd)
     assert '✓' in reply, f'expected success reply, got: {reply!r}'
     assert fake.mail_target() == expected_target, (
-        f'verb={verb} prefix={prefix} type={show_type}: '
+        f'verb={verb} prefix={prefix} assignee={assignee}: '
         f'expected {expected_target}, got {fake.mail_target()}'
     )
 
