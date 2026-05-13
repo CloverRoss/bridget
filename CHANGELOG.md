@@ -5,6 +5,24 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.33.0] - 2026-05-13
+
+### Fixed
+
+- `open mg-XXXX` now renders the design body regardless of
+  frontmatter `status:` — the status appears in the reply header
+  (`**title** _(status)_ (mg-XXXX)`). Previously the handler bailed
+  out with a "no longer awaiting approval" stub for any non-`awaiting-
+  approval` design, which combined with mg-d3d7 tightening `read` to
+  mail-only left no way to surface an approved design's body in
+  Discord. Root cause for the user repro on mg-12ee (approved
+  ~30s before the repro) was the over-narrow status gate added by
+  mg-5dd7, not iCloud path resolution or multi-line YAML in the
+  frontmatter. Also added an `open <id>: rendering body` stderr
+  log line on every render (alongside the existing parse-error
+  log) so post-fix recurrences are diagnosable from logs alone.
+  (mg-0471)
+
 ## [4.32.0] - 2026-05-13
 
 ### Fixed
