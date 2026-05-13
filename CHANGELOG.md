@@ -5,6 +5,22 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.36.0] - 2026-05-13
+
+### Added
+
+- `librarian sync <space> [page-id]` command. Triggers a Confluence
+  ingest via `confluence-ingestion/scripts/run-ingest.sh`; bridget
+  returns immediately while the ingest runs in the background and
+  mails human from the `librarian` sender on completion (success or
+  failure). Full-space mode runs with `--dedupe` so unchanged pages
+  are skipped. Space key must match `^[A-Z][A-Z0-9_-]*$` (Confluence
+  space-key shape); page-id must be all digits. Concurrency is
+  guarded by `/tmp/librarian.lock` — a second invocation while one
+  is in flight is rejected with "ingest already running". If bridget
+  crashes mid-sync the lock-file lingers; `rm /tmp/librarian.lock`
+  to clear it. (mg-7c91 / mg-fea0 P1 #5)
+
 ## [4.35.0] - 2026-05-13
 
 ### Changed

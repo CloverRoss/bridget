@@ -106,6 +106,12 @@ POLL_INTERVAL = 5  # seconds
 DISCORD_MSG_LIMIT = 1900  # leave headroom under the 2000 char limit
 STATUS_OUTPUT_BUDGET = 1700
 
+# librarian sync — fire-and-forget Confluence ingest wrapper (mg-7c91).
+LIBRARIAN_SCRIPT_PATH = '/Users/cloverross/DUGLocal/confluence-ingestion/scripts/run-ingest.sh'
+LIBRARIAN_LOCK_PATH = '/tmp/librarian.lock'
+LIBRARIAN_SPACE_RE = re.compile(r'^[A-Z][A-Z0-9_-]*$')
+LIBRARIAN_PAGE_RE = re.compile(r'^\d+$')
+
 COMMANDS = [
     {
         'name': 'approve',
@@ -196,6 +202,23 @@ COMMANDS = [
         'name': 'preapprove',
         'signature': 'preapprove [true [fast] | false]',
         'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
+    },
+    {
+        'name': 'librarian sync',
+        'signature': 'librarian sync <space> [page-id]',
+        'description': (
+            'trigger a Confluence ingest via the librarian wrapper. '
+            'background fire-and-forget — bridget replies immediately '
+            'and a separate DM lands from the `librarian` sender when '
+            'the ingest finishes (success or failure). full-space mode '
+            'uses `--dedupe` so pages unchanged since the last sync are '
+            'skipped. space-key must match `^[A-Z][A-Z0-9_-]*$` '
+            '(Confluence space-key shape). while a sync is in flight, '
+            '`/tmp/librarian.lock` exists and a second invocation is '
+            'rejected with "ingest already running" — `rm /tmp/librarian.lock` '
+            'if stuck after a bridget crash. '
+            '(mg-7c91 / mg-fea0 P1 #5)'
+        ),
     },
     {
         'name': 'spend',
@@ -2081,6 +2104,71 @@ def handle_command(text: str) -> str | list[str]:
                 f"Try again or check Claude Code directly."
             )
         return _format_quota(result)
+
+    if low == 'librarian sync' or low.startswith('librarian sync '):
+        parts = text.split()
+        if len(parts) < 3 or len(parts) > 4:
+            return "Usage: `librarian sync <space> [page-id]`"
+        space = parts[2]
+        page_id = parts[3] if len(parts) == 4 else None
+        if not LIBRARIAN_SPACE_RE.match(space):
+            return (
+                f"✗ invalid space key `{space}` — must match "
+                f"`^[A-Z][A-Z0-9_-]*$` (Confluence space-key shape)"
+            )
+        if page_id is not None and not LIBRARIAN_PAGE_RE.match(page_id):
+            return f"✗ invalid page-id `{page_id}` — must be all digits"
+        if os.path.exists(LIBRARIAN_LOCK_PATH):
+            return (
+                "✗ ingest already running (`/tmp/librarian.lock` exists). "
+                "wait for the completion DM, or `rm /tmp/librarian.lock` if "
+                "stuck after a bridget crash."
+            )
+        try:
+            fd = os.open(
+                LIBRARIAN_LOCK_PATH,
+                os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+                0o644,
+            )
+            os.write(fd, f'{os.getpid()} {space} {page_id or ""}\n'.encode())
+            os.close(fd)
+        except FileExistsError:
+            return (
+                "✗ ingest already running (`/tmp/librarian.lock` exists). "
+                "wait for the completion DM, or `rm /tmp/librarian.lock` if "
+                "stuck after a bridget crash."
+            )
+        except OSError as e:
+            return f"✗ failed to acquire lock: {e}"
+        script_args = [LIBRARIAN_SCRIPT_PATH, space]
+        if page_id is not None:
+            script_args.append(page_id)
+        # Wrap the script so the lock auto-clears on normal completion.
+        # If bridget itself crashes after this point, the lock lingers —
+        # CHANGELOG documents the manual rm escape hatch.
+        quoted = ' '.join(f'"{a}"' for a in script_args)
+        wrapper_cmd = (
+            f'{quoted}; rc=$?; rm -f "{LIBRARIAN_LOCK_PATH}"; exit $rc'
+        )
+        try:
+            subprocess.Popen(
+                ['/bin/sh', '-c', wrapper_cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as e:
+            try:
+                os.unlink(LIBRARIAN_LOCK_PATH)
+            except OSError:
+                pass
+            return f"✗ failed to spawn librarian: {e}"
+        label = f"{space}/{page_id}" if page_id else space
+        return (
+            f"🔄 librarian sync started for `{label}`; "
+            f"will DM when done."
+        )
 
     if low == 'inbox' or low.startswith('inbox '):
         summary = get_inbox_summary()
