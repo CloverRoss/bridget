@@ -112,6 +112,11 @@ LIBRARIAN_LOCK_PATH = '/tmp/librarian.lock'
 LIBRARIAN_SPACE_RE = re.compile(r'^[A-Z][A-Z0-9_-]*$')
 LIBRARIAN_PAGE_RE = re.compile(r'^\d+$')
 
+# librarian search — ripgrep over ingested Confluence content (mg-b853).
+LIBRARIAN_DATA_DIR_DEFAULT = HOME / 'DUGLocal' / 'confluence-ingestion' / 'data'
+LIBRARIAN_SEARCH_OUTPUT_LIMIT = 1500
+LIBRARIAN_SEARCH_TIMEOUT = 10
+
 COMMANDS = [
     {
         'name': 'approve',
@@ -218,6 +223,23 @@ COMMANDS = [
             'rejected with "ingest already running" — `rm /tmp/librarian.lock` '
             'if stuck after a bridget crash. '
             '(mg-7c91 / mg-fea0 P1 #5)'
+        ),
+    },
+    {
+        'name': 'librarian search',
+        'signature': 'librarian search <query>',
+        'description': (
+            'grep ingested Confluence content via ripgrep. shells out '
+            'to `rg --type=md --max-count=2 --max-columns=200 '
+            '--no-heading --line-number <query> <data-dir>` against '
+            '`~/DUGLocal/confluence-ingestion/data/` (configurable via '
+            '`CONFLUENCE_DATA_DIR`). results are grouped by file with '
+            'up to 2 matching lines per file; total output is capped '
+            'at ~1500 chars (a truncation marker is appended if hit). '
+            'no relevance ranking — refine the query if hits are noisy. '
+            'trusts ingest-time redaction (REDACTION_POLICY applied at '
+            'write). requires `rg` on PATH (`brew install ripgrep`). '
+            '(mg-b853 / mg-fea0 P2 #8)'
         ),
     },
     {
@@ -1667,6 +1689,64 @@ def _format_quota(quota: dict, now: float | None = None) -> str:
     return '\n'.join(lines)
 
 
+def _librarian_search_root() -> Path:
+    override = os.environ.get('CONFLUENCE_DATA_DIR')
+    if override:
+        return Path(override).expanduser()
+    return LIBRARIAN_DATA_DIR_DEFAULT
+
+
+def _format_librarian_search_results(rg_stdout: str, root: Path) -> str:
+    """Group `rg --no-heading --line-number` output by file.
+
+    Output lines have shape `<path>:<lineno>:<content>`. Lines without
+    that shape are skipped (covers e.g. an unexpected leading blank).
+    Returns the formatted block (Discord markdown), capped at
+    LIBRARIAN_SEARCH_OUTPUT_LIMIT with a truncation marker appended
+    if the cap is hit. Empty stdout → empty string.
+    """
+    by_file: dict[str, list[tuple[int, str]]] = {}
+    order: list[str] = []
+    for raw in rg_stdout.splitlines():
+        parts = raw.split(':', 2)
+        if len(parts) != 3:
+            continue
+        path, lineno_str, content = parts
+        try:
+            lineno = int(lineno_str)
+        except ValueError:
+            continue
+        if path not in by_file:
+            by_file[path] = []
+            order.append(path)
+        by_file[path].append((lineno, content))
+
+    if not order:
+        return ''
+
+    blocks = []
+    for path in order:
+        try:
+            rel = Path(path).relative_to(root)
+        except ValueError:
+            rel = Path(path)
+        rel_str = str(rel)
+        if rel_str.endswith('.md'):
+            rel_str = rel_str[:-3]
+        lines = [f'**{rel_str}**']
+        for lineno, content in by_file[path]:
+            lines.append(f'  L{lineno}: {content.strip()}')
+        blocks.append('\n'.join(lines))
+
+    out = '\n\n'.join(blocks)
+    if len(out) > LIBRARIAN_SEARCH_OUTPUT_LIMIT:
+        out = (
+            out[:LIBRARIAN_SEARCH_OUTPUT_LIMIT].rstrip()
+            + '\n…(truncated; refine query)'
+        )
+    return out
+
+
 def handle_command(text: str) -> str | list[str]:
     text = text.strip()
     low = text.lower()
@@ -2177,6 +2257,45 @@ def handle_command(text: str) -> str | list[str]:
             f"🔄 librarian sync started for `{label}`; "
             f"will DM when done."
         )
+
+    if low == 'librarian search' or low.startswith('librarian search '):
+        query = text[len('librarian search'):].lstrip()
+        if not query:
+            return "Usage: `librarian search <query>`"
+        root = _librarian_search_root()
+        if not root.exists():
+            return f"no Confluence data ingested yet at `{root}`"
+        try:
+            result = subprocess.run(
+                [
+                    'rg', '--type=md', '--max-count=2',
+                    '--max-columns=200', '--color=never',
+                    '--no-heading', '--line-number',
+                    query, str(root),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=LIBRARIAN_SEARCH_TIMEOUT,
+            )
+        except FileNotFoundError:
+            return (
+                'search failed: `rg` not installed '
+                '(try `brew install ripgrep`)'
+            )
+        except subprocess.TimeoutExpired:
+            return (
+                f'search failed: ripgrep timed out '
+                f'(>{LIBRARIAN_SEARCH_TIMEOUT}s); refine query'
+            )
+        if result.returncode == 1:
+            return f"no results for `{query}`"
+        if result.returncode != 0:
+            err = (result.stderr or result.stdout).strip()
+            return f"search failed: {err[:200]}"
+        formatted = _format_librarian_search_results(result.stdout, root)
+        if not formatted:
+            return f"no results for `{query}`"
+        return formatted
 
     if low == 'inbox' or low.startswith('inbox '):
         summary = get_inbox_summary()

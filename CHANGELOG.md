@@ -5,6 +5,21 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.38.0] - 2026-05-13
+
+### Added
+
+- `librarian search <query>` command. Shells out to ripgrep against
+  the ingested Confluence data tree (default
+  `~/DUGLocal/confluence-ingestion/data/`, configurable via
+  `CONFLUENCE_DATA_DIR`). Results are grouped by file with up to 2
+  matching lines per file (`rg --max-count=2`); total output is
+  capped at ~1500 chars with a `…(truncated; refine query)` marker
+  appended when the cap is hit. No relevance ranking — directory
+  order. Trusts ingest-time redaction (REDACTION_POLICY applied at
+  write time per mg-b8a4). If `rg` isn't on PATH the reply hints at
+  `brew install ripgrep`. (mg-b853 / mg-fea0 P2 #8)
+
 ## [4.37.0] - 2026-05-13
 
 ### Fixed
