@@ -5,6 +5,14 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.25.0] - 2026-05-13
+
+### Changed
+
+- `preapprove` no-arg state output now includes the next-action
+  hint (e.g. "send 'preapprove true' to enable"). Behavior with
+  args unchanged. (mg-7e0a)
+
 ## [4.24.0] - 2026-05-13
 
 ### Changed

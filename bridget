@@ -1807,9 +1807,8 @@ def handle_command(text: str) -> str | list[str]:
         if not rest:
             state = load_preapproval()
             if state['enabled']:
-                fast_word = 'on' if state['fast'] else 'off'
-                return f"🟢 pre-approval: enabled (fast: {fast_word})."
-            return "pre-approval: disabled."
+                return "pre-approval: currently enabled. send 'preapprove false' to disable"
+            return "pre-approval: currently disabled. send 'preapprove true' to enable"
         usage = "Usage: `preapprove [true [fast] | false]`"
         if rest[0] not in ('true', 'false'):
             return usage

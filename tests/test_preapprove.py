@@ -94,23 +94,41 @@ def test_save_coerces_truthy_values_to_bool(bridget):
 
 # -- handle_command: preapprove branch --------------------------------------
 
-def test_preapprove_no_args_when_disabled_shows_disabled(bridget):
+def test_preapprove_no_args_when_disabled_includes_next_action_hint(bridget):
+    # File written explicitly so we exercise the on-disk {"enabled": false} path.
+    bridget.save_preapproval({'enabled': False, 'fast': False})
     reply = bridget.handle_command('preapprove')
-    assert 'disabled' in reply.lower()
+    lowered = reply.lower()
+    assert 'currently disabled' in lowered
+    assert 'preapprove true' in lowered
+    assert 'to enable' in lowered
 
 
-def test_preapprove_no_args_when_enabled_shows_status_with_fast_off(bridget):
+def test_preapprove_no_args_when_disabled_by_default_includes_next_action_hint(bridget):
+    # No file on disk yet — defaults to disabled. Same hint must appear.
+    reply = bridget.handle_command('preapprove')
+    lowered = reply.lower()
+    assert 'currently disabled' in lowered
+    assert 'preapprove true' in lowered
+    assert 'to enable' in lowered
+
+
+def test_preapprove_no_args_when_enabled_includes_next_action_hint(bridget):
     bridget.save_preapproval({'enabled': True, 'fast': False})
     reply = bridget.handle_command('preapprove')
-    assert 'enabled' in reply.lower()
-    assert 'fast: off' in reply.lower()
+    lowered = reply.lower()
+    assert 'currently enabled' in lowered
+    assert 'preapprove false' in lowered
+    assert 'to disable' in lowered
 
 
-def test_preapprove_no_args_when_fast_enabled_shows_fast_on(bridget):
+def test_preapprove_no_args_when_fast_enabled_includes_next_action_hint(bridget):
     bridget.save_preapproval({'enabled': True, 'fast': True})
     reply = bridget.handle_command('preapprove')
-    assert 'enabled' in reply.lower()
-    assert 'fast: on' in reply.lower()
+    lowered = reply.lower()
+    assert 'currently enabled' in lowered
+    assert 'preapprove false' in lowered
+    assert 'to disable' in lowered
 
 
 def test_preapprove_true_enables_with_fast_off(bridget):
