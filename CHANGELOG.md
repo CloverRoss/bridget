@@ -5,6 +5,18 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.39.0] - 2026-05-13
+
+### Added
+
+- bridget logs now include UTC timestamps + reason context for
+  `on_ready`, the `restart` command, and Discord `HTTPException`
+  catches. Closes the diagnostic gap from untraced uncommanded
+  restarts (bridget.log previously held 31 "logged in as Bird Get"
+  lines with no timestamps and no way to tell user-triggered
+  restarts from launchd respawns after a crash). Lines go to stderr,
+  which launchd captures into `bridget.log`. (mg-5d0e / mg-7f65)
+
 ## [4.38.0] - 2026-05-13
 
 ### Added
