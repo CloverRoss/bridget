@@ -5,6 +5,24 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.42.0] - 2026-05-13
+
+### Changed
+
+- `open mg-XXXX` now returns a Notes-app pointer
+  (`Notes app → Pogo Designs → mg-XXXX: <title>`) instead of trying
+  to read the iCloud-stored design directly. Closes the macOS TCC
+  blocker for bridget reading `~/Library/Mobile Documents` and the
+  Discord DM truncation issue. Architect publishes to Notes on each
+  design save (mg-10e2). Note: forward-only; existing designs
+  (pre-this-PR) are not in Notes; pointer reply for those points to
+  a non-existent note. Title is sourced from `mg show <id>`; if mg
+  show fails, the reply is `open: mg item mg-XXXX not found`.
+  Drops the now-unused `read_design`, `_materialize_icloud`, and
+  `OPEN_BODY_LIMIT` symbols. The `read_design_doc` /
+  `read_design_status` helpers stay — `read dr-XXXX` still reads
+  the iCloud-stored Report doc. (mg-10e2 / mg-6245)
+
 ## [4.41.0] - 2026-05-13
 
 ### Changed

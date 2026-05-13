@@ -161,7 +161,7 @@ COMMANDS = [
     {
         'name': 'open',
         'signature': 'open mg-XXXX',
-        'description': 'retrieve a design doc (use `read` for mail message-ids). renders the body regardless of frontmatter `status:` so you can re-read approved/auto-approved/rejected designs as well as awaiting-approval ones — the status appears in the header. if the file is missing or unparseable, returns `design not found`. long bodies truncate to ~1700 chars with a continuation footer pointing at the full doc under `~/Library/Mobile Documents/com~apple~CloudDocs/Pogo/designs/<id>.md`.',
+        'description': 'return a Notes-app pointer for a design (use `read` for mail message-ids). reply is `Notes app → Pogo Designs → <id>: <title>`; the architect publishes each design to the Notes folder on save. if mg show fails (unknown id) replies `open: mg item mg-XXXX not found`. forward-only: designs filed before this change land are not in Notes.',
     },
     {
         'name': 'idea:',
@@ -1092,76 +1092,6 @@ FRONTMATTER_TITLE_RE = re.compile(r'^title:\s*(.+)$', re.MULTILINE)
 # guard. Same case-insensitive hex shape mg/dr work-items emit elsewhere.
 MG_ID_RE = re.compile(r'^mg-[0-9a-f]+$')
 
-# Body truncation budget for `open` replies. Discord's per-message limit is
-# 2000; we leave headroom for the title header + the continuation footer.
-OPEN_BODY_LIMIT = 1700
-
-
-def _materialize_icloud(path: Path) -> None:
-    """Best-effort: ask CloudDocsd to download an iCloud placeholder.
-
-    No-op if `brctl` isn't on PATH (non-macOS hosts, stripped images) or if
-    the file isn't an iCloud placeholder. Silent on failure — caller re-checks
-    `path.exists()` afterwards.
-    """
-    if not shutil.which('brctl'):
-        return
-    try:
-        subprocess.run(
-            ['brctl', 'download', str(path)],
-            capture_output=True, timeout=10,
-        )
-    except Exception:
-        pass
-
-
-def read_design(mg_id: str) -> dict | None:
-    """Return {'title': str|None, 'status': str|None, 'body': str} for a
-    design, or None if the file is missing/unreadable. Defensive against
-    malformed frontmatter: any unexpected parsing exception returns None
-    rather than crashing the handler.
-    """
-    path = DESIGNS_DIR / f'{mg_id}.md'
-    if not path.exists():
-        # Designs live under iCloud Drive; a launchd-spawned bridget can see
-        # placeholder dentries that read_text() rejects with ENOENT. Nudge
-        # CloudDocsd to materialize, then re-check before giving up.
-        _materialize_icloud(path)
-        if not path.exists():
-            return None
-    try:
-        text = path.read_text()
-    except (FileNotFoundError, NotADirectoryError, PermissionError, OSError) as e:
-        print(
-            f'bridget: read_design IO error for {mg_id}: '
-            f'{type(e).__name__}: {e}',
-            file=sys.stderr,
-        )
-        return None
-    except Exception as e:
-        print(
-            f'bridget: read_design unexpected error for {mg_id}: '
-            f'{type(e).__name__}: {e}',
-            file=sys.stderr,
-        )
-        return None
-    try:
-        m = FRONTMATTER_RE.match(text)
-        if not m:
-            return {'title': None, 'status': None, 'body': text.lstrip('\n')}
-        fm = m.group(0)
-        sm = FRONTMATTER_STATUS_RE.search(fm)
-        tm = FRONTMATTER_TITLE_RE.search(fm)
-        body = FRONTMATTER_RE.sub('', text, count=1).lstrip('\n')
-        return {
-            'title': tm.group(1).strip() if tm else None,
-            'status': sm.group(1) if sm else None,
-            'body': body,
-        }
-    except Exception as e:
-        print(f'bridget: read_design parse error for {mg_id}: {e}', file=sys.stderr)
-        return None
-
 
 def read_design_status(mg_id: str) -> str | None:
     """Return the frontmatter status field for a design, or None."""
@@ -1885,25 +1815,14 @@ def handle_command(text: str) -> str | list[str]:
         arg = parts[1].strip().lower()
         if not MG_ID_RE.match(arg):
             return usage
-        design = read_design(arg)
-        if design is None:
-            print(f'bridget: open {arg}: file missing or unreadable', file=sys.stderr)
-            return 'design not found'
-        status = design.get('status') or 'unknown'
-        title = design.get('title') or arg
-        body = design.get('body') or ''
-        print(
-            f'bridget: open {arg}: rendering body (status={status}, '
-            f'body_len={len(body)})',
-            file=sys.stderr,
-        )
-        footer = (
-            f"\n\n…(continued — full doc at "
-            f"~/Library/Mobile Documents/com~apple~CloudDocs/Pogo/designs/{arg}.md)"
-        )
-        if len(body) > OPEN_BODY_LIMIT:
-            body = body[:OPEN_BODY_LIMIT].rstrip() + footer
-        return f"**{title}** _({status})_ ({arg})\n\n{body}"
+        rc, out, _ = run_mg(['show', arg])
+        if rc != 0:
+            return f'open: mg item {arg} not found'
+        title = '?'
+        m = re.search(r'^Title:\s+(.+)$', out, re.MULTILINE)
+        if m:
+            title = m.group(1).strip()
+        return f'Notes app → Pogo Designs → **{arg}: {title}**'
 
     if low.startswith('read mg-') or low.startswith('read dr-'):
         parts = text.split(None, 1)
