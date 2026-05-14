@@ -5,6 +5,26 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [4.46.0] - 2026-05-14
+
+### Added
+
+- `accountant run-now [<week>]` + `accountant status` verbs. `run-now`
+  backgrounds `scripts/run-budget-cycle.sh` from the auto-budget repo
+  (mg-6064) via `subprocess.Popen` and replies immediately with
+  `🔄 budget cycle started; will DM when done.` — the wrapper script
+  mails human from the `accountant` sender on completion. Optional
+  week selector must match ISO `YYYY-Www` (e.g. `2026-W18`); omit for
+  the current week. `/tmp/budget-cycle.lock` is owned by the wrapper
+  (create on entry, remove on exit); bridget only CHECKS for it and
+  rejects piling invocations. `status` surfaces
+  `~/.pogo/auto-budget.log` + `~/.pogo/auto-budget.err.log` mtime +
+  tail (last 5 lines / 400 chars per log); empty err log is omitted;
+  neither present → `no runs yet`. Mirrors librarian sync shape from
+  mg-8760. Not gated by `BRIDGET_PROFILE` — laptop-only by virtue of
+  the wrapper-script path (Robin without `~/DUGLocal/auto-budget/`
+  gets a clean "failed to start" reply). (ds-3123 / mg-b64f P2 #8)
+
 ## [4.45.0] - 2026-05-13
 
 ### Added

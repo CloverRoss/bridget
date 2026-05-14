@@ -132,6 +132,19 @@ LIBRARIAN_DATA_DIR_DEFAULT = HOME / 'DUGLocal' / 'confluence-ingestion' / 'data'
 LIBRARIAN_SEARCH_OUTPUT_LIMIT = 1500
 LIBRARIAN_SEARCH_TIMEOUT = 10
 
+# accountant run-now + status — auto-budget cycle (mg-6064 wrapper, ds-3123).
+# Unlike librarian sync, bridget does NOT create the lock file here — the
+# wrapper script owns the /tmp/budget-cycle.lock lifecycle (create on entry,
+# remove on exit). bridget only CHECKS for it before spawning so repeat
+# invocations don't pile cycles on top of each other.
+ACCOUNTANT_SCRIPT_PATH = '/Users/cloverross/DUGLocal/auto-budget/scripts/run-budget-cycle.sh'
+ACCOUNTANT_LOCK_PATH = '/tmp/budget-cycle.lock'
+ACCOUNTANT_LOG_PATH = HOME / '.pogo' / 'auto-budget.log'
+ACCOUNTANT_ERR_LOG_PATH = HOME / '.pogo' / 'auto-budget.err.log'
+ACCOUNTANT_WEEK_RE = re.compile(r'^\d{4}-W\d{2}$')
+ACCOUNTANT_STATUS_TAIL_LINES = 5
+ACCOUNTANT_STATUS_TAIL_BUDGET = 400
+
 # Profile gate (mg-5059): Robin (DO bridget) and laptop bridget share the same
 # codebase; BRIDGET_PROFILE selects which command set is exposed. Default is
 # 'laptop' (omits Robin-only commands from help + verb dispatch). Robin sets
@@ -291,6 +304,37 @@ COMMANDS = [
         'name': 'spend',
         'signature': 'spend',
         'description': 'show live Anthropic token quota consumption. Probes the Anthropic API to read rate-limit headers (input + output token windows) and reports % used + when each window resets. Requires `ANTHROPIC_API_KEY` in `~/.pogo/bridget.env`. Costs ~1 token per probe. For historical spend, use Claude Code `/cost` or `mg spend`. Note: the API surfaces its own rate-limit windows (typically per-minute) — Claude Code subscription quotas (5-hour session, weekly) are not exposed via the API.',
+    },
+    {
+        'name': 'accountant run-now',
+        'signature': 'accountant run-now [<week>]',
+        'description': (
+            'trigger an out-of-cadence auto-budget cycle via the '
+            'accountant wrapper. background fire-and-forget — bridget '
+            'replies immediately and a separate DM lands from the '
+            '`accountant` sender when the cycle finishes (success or '
+            'failure). optional week selector must match ISO '
+            '`YYYY-Www` (e.g. `2026-W18`); omit to run for the '
+            'current week. while a cycle is in flight '
+            '`/tmp/budget-cycle.lock` exists and a second invocation '
+            'is rejected with "already running" — the wrapper script '
+            '(mg-6064) owns the lock lifecycle, so '
+            '`rm /tmp/budget-cycle.lock` only if stuck after a '
+            'wrapper crash. (ds-3123 / mg-b64f P2 #8)'
+        ),
+    },
+    {
+        'name': 'accountant status',
+        'signature': 'accountant status',
+        'description': (
+            'last auto-budget cycle timestamp + log tail. reads '
+            '`~/.pogo/auto-budget.log` (stdout) and '
+            '`~/.pogo/auto-budget.err.log` (stderr) — the launchd '
+            'log paths from mg-6064 — and surfaces each file\'s '
+            'mtime + last 5 lines (capped at ~400 chars per log). '
+            'an empty err log is omitted. if neither log exists '
+            'the reply is `no runs yet`. (ds-3123 / mg-b64f P2 #8)'
+        ),
     },
     {
         'name': 'help',
@@ -2319,6 +2363,68 @@ def handle_command(text: str) -> str | list[str]:
         if not formatted:
             return f"no results for `{query}`"
         return formatted
+
+    if low == 'accountant run-now' or low.startswith('accountant run-now '):
+        parts = text.split(None, 2)
+        week = parts[2].strip() if len(parts) > 2 else ''
+        if week and not ACCOUNTANT_WEEK_RE.match(week):
+            return "Usage: `accountant run-now [YYYY-Www]`"
+        if os.path.exists(ACCOUNTANT_LOCK_PATH):
+            return (
+                f"✗ budget cycle already running "
+                f"(`{ACCOUNTANT_LOCK_PATH}` exists). wait for the "
+                f"completion DM, or `rm {ACCOUNTANT_LOCK_PATH}` if "
+                f"stuck after a wrapper crash."
+            )
+        script_args = [ACCOUNTANT_SCRIPT_PATH]
+        if week:
+            script_args.append(week)
+        try:
+            subprocess.Popen(
+                script_args,
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                stdin=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+        except OSError as e:
+            return f"✗ failed to start budget cycle: {e}"
+        label = f' for `{week}`' if week else ''
+        return (
+            f"🔄 budget cycle started{label}; "
+            f"will DM when done."
+        )
+
+    if low == 'accountant status':
+        out_log = ACCOUNTANT_LOG_PATH
+        err_log = ACCOUNTANT_ERR_LOG_PATH
+        header = '📊 **Budget cycle status**'
+        if not out_log.exists() and not err_log.exists():
+            return f"{header}\n  no runs yet"
+        out_parts = [header]
+        if out_log.exists():
+            mtime = datetime.datetime.fromtimestamp(
+                out_log.stat().st_mtime, tz=datetime.timezone.utc
+            )
+            tail = '\n'.join(
+                out_log.read_text().splitlines()[-ACCOUNTANT_STATUS_TAIL_LINES:]
+            )
+            out_parts.append(f"  last stdout: {mtime.isoformat()}")
+            out_parts.append(
+                f"  ```\n{tail[:ACCOUNTANT_STATUS_TAIL_BUDGET]}\n```"
+            )
+        if err_log.exists() and err_log.stat().st_size > 0:
+            mtime = datetime.datetime.fromtimestamp(
+                err_log.stat().st_mtime, tz=datetime.timezone.utc
+            )
+            tail = '\n'.join(
+                err_log.read_text().splitlines()[-ACCOUNTANT_STATUS_TAIL_LINES:]
+            )
+            out_parts.append(f"  last stderr: {mtime.isoformat()}")
+            out_parts.append(
+                f"  ```\n{tail[:ACCOUNTANT_STATUS_TAIL_BUDGET]}\n```"
+            )
+        return '\n'.join(out_parts)
 
     if low == 'inbox' or low.startswith('inbox '):
         summary = get_inbox_summary()
