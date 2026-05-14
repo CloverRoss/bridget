@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [4.46.0] - 2026-05-14
 
+### Fixed
+
+- `categorize_in_flight` now treats legacy mayor-flow project tags
+  (`kickoff-done`, `handed-off-to-mayor`) as in-flight alongside the
+  canonical `in-progress`. mg-4075 + similar in-flight projects now
+  appear under Projects in /status. Will collapse to canonical-only
+  once ds-a57b lifecycle migration completes. (mg-f059)
+
 ### Added
 
 - `accountant run-now [<week>]` + `accountant status` verbs. `run-now`

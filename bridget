@@ -1517,6 +1517,16 @@ _PROJECT_TAGS = frozenset({
     'handed-off-to-mayor', 'staged',
 })
 
+# Tags that mean a Type=project is in flight. Includes legacy
+# mayor-flow tags (kickoff-done, handed-off-to-mayor) during
+# the ds-a57b lifecycle migration window. TODO: collapse to
+# just 'in-progress' once all in-flight projects retag.
+_ACTIVE_PROJECT_TAGS = frozenset({
+    'in-progress',           # canonical (ds-a57b target)
+    'kickoff-done',          # legacy mayor-flow (still in flight)
+    'handed-off-to-mayor',   # legacy mayor-flow (still in flight)
+})
+
 # mg item-type → status section. Anything not listed falls into "Other".
 _TYPE_TO_SECTION = {
     'report': 'Reports',
@@ -1528,9 +1538,12 @@ _TYPE_TO_SECTION = {
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
-    Type=project items tagged 'in-progress' bucket into 'Projects'; other
-    Type=project items are hidden entirely — they're not in flight and
-    live on the Product Roadmap, not the status view.
+    Type=project items carrying any tag in `_ACTIVE_PROJECT_TAGS` bucket
+    into 'Projects' (canonical 'in-progress' plus legacy mayor-flow
+    'kickoff-done' and 'handed-off-to-mayor' during the ds-a57b lifecycle
+    migration window). Other Type=project items are hidden entirely —
+    they're not in flight and live on the Product Roadmap, not the
+    status view.
 
     Type=idea items still carrying legacy _PROJECT_TAGS lifecycle tags
     are suppressed entirely during the mg-1d2b Phase 5 transition window
@@ -1547,7 +1560,7 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
         if item_type == 'report' and 'approved' in tags:
             continue
         if item_type == 'project':
-            if 'in-progress' in tags:
+            if _ACTIVE_PROJECT_TAGS & tags:
                 buckets['Projects'].append(item)
             continue  # other states hidden — live on Roadmap
         if item_type == 'idea' and _PROJECT_TAGS & tags:

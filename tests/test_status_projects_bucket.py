@@ -1,12 +1,15 @@
 """Tests for the Status view's dedicated Projects bucket (mg-946e, mg-b824,
-mg-4955, mg-2e39, mg-e68c).
+mg-4955, mg-2e39, mg-e68c, mg-f059).
 
 Per mg-1d2b Phase 5, Projects are first-class `--type=project` mg items.
-Per the mg-e68c tag-taxonomy migration, only the canonical `in-progress`
-lifecycle tag promotes a Type=project into the 'Projects' bucket; all
-other states (`scheduled`, `ready-for-kickoff`, `done`, `cancelled`, or
-no canonical tag) are hidden — they live on the Product Roadmap, not the
-status view.
+Per the mg-e68c tag-taxonomy migration, the canonical `in-progress`
+lifecycle tag promotes a Type=project into the 'Projects' bucket. Per
+mg-f059, during the ds-a57b lifecycle migration window the legacy
+mayor-flow tags `kickoff-done` and `handed-off-to-mayor` are also
+treated as in-flight signals (will collapse to canonical-only once all
+in-flight projects retag). All other states (`scheduled`,
+`ready-for-kickoff`, `done`, `cancelled`, or no lifecycle tag) are
+hidden — they live on the Product Roadmap, not the status view.
 
 During the transition window, Type=idea items still carrying legacy
 Project-lifecycle tags (`scheduled`, `in-progress`, `kickoff-done`, etc.)
@@ -87,12 +90,32 @@ def test_project_with_cancelled_is_hidden(bridget):
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_no_canonical_lifecycle_tag_is_hidden(bridget):
-    # Post mg-e68c: legacy `kickoff-done` is no longer a running signal;
-    # without canonical `in-progress`, the Project is hidden.
+def test_project_with_kickoff_done_buckets_into_projects(bridget):
+    # mg-f059: during the ds-a57b lifecycle migration window the legacy
+    # mayor-flow `kickoff-done` tag still signals an in-flight project.
     items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
     buckets = bridget.categorize_in_flight(items)
-    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
+    assert buckets['Designs'] == []
+
+
+def test_project_with_handed_off_to_mayor_buckets_into_projects(bridget):
+    # mg-f059: legacy mayor-flow `handed-off-to-mayor` is in-flight.
+    items = [{'id': 'mg-4075', 'type': 'project',
+              'tags': ['handed-off-to-mayor']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-4075']
+    assert buckets['Designs'] == []
+
+
+def test_project_with_mixed_legacy_tags_buckets_into_projects(bridget):
+    # Realistic mg-4075 shape: kickoff-done + handed-off-to-mayor plus
+    # domain/scope tags. Still in-flight; bucket into Projects.
+    items = [{'id': 'mg-4075', 'type': 'project',
+              'tags': ['director', 'product', 'gamedev',
+                       'handed-off-to-mayor', 'kickoff-done']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-4075']
 
 
 def test_project_with_no_tags_is_hidden(bridget):
