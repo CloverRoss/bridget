@@ -1514,14 +1514,17 @@ _PROJECT_TAGS = frozenset({
     'handed-off-to-mayor', 'staged',
 })
 
-# Tags that mean a Type=project is in flight. Includes legacy
-# mayor-flow tags (kickoff-done, handed-off-to-mayor) during
-# the ds-a57b lifecycle migration window. TODO: collapse to
-# just 'in-progress' once all in-flight projects retag.
+# Transitional fallback (per project-status-tag-convention memory
+# 2026-05-15). PRIMARY signal for In Progress is now mg native status
+# == 'claimed'. This tag set lets us continue showing in-flight
+# projects whose mayor hasn't migrated their status from 'available'
+# (with legacy active tags) to 'claimed' yet. Remove this set + the
+# fallback branch in categorize_in_flight once all in-flight projects
+# are claimed.
 _ACTIVE_PROJECT_TAGS = frozenset({
-    'in-progress',           # canonical (ds-a57b target)
-    'kickoff-done',          # legacy mayor-flow (still in flight)
-    'handed-off-to-mayor',   # legacy mayor-flow (still in flight)
+    'in-progress',
+    'kickoff-done',
+    'handed-off-to-mayor',
 })
 
 # mg item-type → status section. Anything not listed falls into "Other".
@@ -1535,12 +1538,15 @@ _TYPE_TO_SECTION = {
 def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
     """Bucket in-flight items by type. Unknown types fall into 'Other'.
 
-    Type=project items carrying any tag in `_ACTIVE_PROJECT_TAGS` bucket
-    into 'Projects' (canonical 'in-progress' plus legacy mayor-flow
-    'kickoff-done' and 'handed-off-to-mayor' during the ds-a57b lifecycle
-    migration window). Other Type=project items are hidden entirely —
-    they're not in flight and live on the Product Roadmap, not the
-    status view.
+    Type=project items bucket into 'Projects' when mg's native status is
+    `claimed` (mayor has claimed the project = In Progress, per the
+    project-status-tag-convention 2026-05-15). During the convention-
+    migration window a transitional fallback also buckets `available`-
+    status projects carrying any legacy active tag in `_ACTIVE_PROJECT_TAGS`
+    so in-flight projects whose mayor hasn't migrated their status from
+    'available' to 'claimed' yet still show up. All other Type=project
+    items (Scheduled / Ready-for-Kickoff / Done / Cancelled) are hidden
+    — they live on the Product Roadmap, not the status view.
 
     Type=idea items still carrying legacy _PROJECT_TAGS lifecycle tags
     are suppressed entirely during the mg-1d2b Phase 5 transition window
@@ -1557,7 +1563,11 @@ def categorize_in_flight(items: list[dict]) -> dict[str, list[dict]]:
         if item_type == 'report' and 'approved' in tags:
             continue
         if item_type == 'project':
-            if _ACTIVE_PROJECT_TAGS & tags:
+            status = item.get('status')
+            if status == 'claimed':
+                buckets['Projects'].append(item)
+                continue
+            if status == 'available' and _ACTIVE_PROJECT_TAGS & tags:
                 buckets['Projects'].append(item)
             continue  # other states hidden — live on Roadmap
         if item_type == 'idea' and _PROJECT_TAGS & tags:

@@ -67,10 +67,11 @@ def _ndjson(items: list[dict]) -> str:
 # -- Part A: Projects bucket reads Type=project + in-progress (mg-2e39) ----
 
 def test_project_with_handed_off_to_mayor_buckets_into_projects(bridget):
-    # mg-f059: legacy mayor-flow `handed-off-to-mayor` is in-flight
-    # during the ds-a57b migration window, so the Project shows under
-    # Projects even alongside a non-flight tag like `staged`.
-    items = [{'id': 'mg-fea0', 'type': 'project',
+    # mg-f059 + mg-950b: legacy mayor-flow `handed-off-to-mayor` on a
+    # status=available project is in-flight during the convention-
+    # migration fallback window, so the Project shows under Projects
+    # even alongside a non-flight tag like `staged`.
+    items = [{'id': 'mg-fea0', 'type': 'project', 'status': 'available',
               'tags': ['handed-off-to-mayor', 'staged']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-fea0']
@@ -83,8 +84,9 @@ def test_project_with_staged_alone_is_hidden(bridget):
 
 
 def test_project_with_handed_off_alone_buckets_into_projects(bridget):
-    # mg-f059: `handed-off-to-mayor` is an in-flight signal.
-    items = [{'id': 'mg-bbbb', 'type': 'project',
+    # mg-f059 + mg-950b: `handed-off-to-mayor` on a status=available
+    # project is an in-flight fallback signal.
+    items = [{'id': 'mg-bbbb', 'type': 'project', 'status': 'available',
               'tags': ['handed-off-to-mayor']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-bbbb']
@@ -98,17 +100,21 @@ def test_project_with_kickoff_pending_is_hidden(bridget):
 
 
 def test_in_progress_project_buckets_into_projects(bridget):
-    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['in-progress']}]
+    # mg-950b: status=claimed is the canonical In Progress signal.
+    items = [{'id': 'mg-79e8', 'type': 'project', 'status': 'claimed',
+              'tags': ['in-progress']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
     assert buckets['Designs'] == []
 
 
 def test_kickoff_done_project_buckets_into_projects(bridget):
-    # mg-f059: legacy mayor-flow `kickoff-done` is treated as in-flight
-    # during the ds-a57b lifecycle migration window. Will collapse to
-    # canonical 'in-progress'-only once all in-flight projects retag.
-    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
+    # mg-f059 + mg-950b: legacy mayor-flow `kickoff-done` on a
+    # status=available project is treated as in-flight via the
+    # convention-migration fallback. Will collapse once all in-flight
+    # projects migrate to status=claimed.
+    items = [{'id': 'mg-79e8', 'type': 'project', 'status': 'available',
+              'tags': ['kickoff-done']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
 

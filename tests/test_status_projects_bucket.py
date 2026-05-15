@@ -1,15 +1,16 @@
 """Tests for the Status view's dedicated Projects bucket (mg-946e, mg-b824,
-mg-4955, mg-2e39, mg-e68c, mg-f059).
+mg-4955, mg-2e39, mg-e68c, mg-f059, mg-950b).
 
 Per mg-1d2b Phase 5, Projects are first-class `--type=project` mg items.
-Per the mg-e68c tag-taxonomy migration, the canonical `in-progress`
-lifecycle tag promotes a Type=project into the 'Projects' bucket. Per
-mg-f059, during the ds-a57b lifecycle migration window the legacy
-mayor-flow tags `kickoff-done` and `handed-off-to-mayor` are also
-treated as in-flight signals (will collapse to canonical-only once all
-in-flight projects retag). All other states (`scheduled`,
-`ready-for-kickoff`, `done`, `cancelled`, or no lifecycle tag) are
-hidden — they live on the Product Roadmap, not the status view.
+Per the project-status-tag-convention (2026-05-15) and mg-950b, mg's
+native status field is the PRIMARY signal: status=`claimed` → In
+Progress (bucketed into Projects). A transitional fallback also buckets
+status=`available` projects carrying any legacy active tag
+(`in-progress`, `kickoff-done`, `handed-off-to-mayor`) during the
+convention-migration window — that branch goes away once all in-flight
+projects are claimed. Anything else (status=`available` without legacy
+tags = Scheduled / Ready-for-Kickoff; status=`done`; status=`shelved`)
+is hidden — those live on the Product Roadmap, not the status view.
 
 During the transition window, Type=idea items still carrying legacy
 Project-lifecycle tags (`scheduled`, `in-progress`, `kickoff-done`, etc.)
@@ -56,83 +57,122 @@ def _ndjson(items: list[dict]) -> str:
     return '\n'.join(json.dumps(i) for i in items) + '\n'
 
 
-# -- categorize_in_flight: Type=project routing ----------------------------
+# -- categorize_in_flight: Type=project routing (status-based, mg-950b) ----
 
-def test_project_with_in_progress_buckets_into_projects(bridget):
-    items = [{'id': 'mg-aaaa', 'type': 'project', 'tags': ['in-progress']}]
+def test_project_with_status_claimed_buckets_into_projects(bridget):
+    # mg-950b: primary signal — mg native status='claimed' = In Progress.
+    items = [{'id': 'mg-aaaa', 'type': 'project', 'status': 'claimed'}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-aaaa']
     assert buckets['Designs'] == []
 
 
-def test_project_with_scheduled_is_hidden(bridget):
-    items = [{'id': 'mg-fea0', 'type': 'project', 'tags': ['scheduled']}]
+def test_project_status_claimed_with_legacy_tag_buckets_into_projects(bridget):
+    # status=claimed wins regardless of tags — the 'in-progress' tag is
+    # redundant but harmless once the project is migrated.
+    items = [{'id': 'mg-aaab', 'type': 'project', 'status': 'claimed',
+              'tags': ['in-progress']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-aaab']
+
+
+def test_project_status_available_no_legacy_tags_is_hidden(bridget):
+    # status=available with no legacy active tag = Scheduled → hidden.
+    items = [{'id': 'mg-4075', 'type': 'project', 'status': 'available'}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_ready_for_kickoff_is_hidden(bridget):
-    items = [{'id': 'mg-5555', 'type': 'project',
+def test_project_status_available_ready_for_kickoff_is_hidden(bridget):
+    # Ready-for-Kickoff is its own state (status=available + ready-for-
+    # kickoff tag), NOT In Progress. Hidden from Projects.
+    items = [{'id': 'mg-5555', 'type': 'project', 'status': 'available',
               'tags': ['ready-for-kickoff']}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_done_is_hidden(bridget):
-    items = [{'id': 'mg-1111', 'type': 'project', 'tags': ['done']}]
+def test_project_status_done_is_hidden(bridget):
+    # status=done → Done state, hidden from Projects bucket.
+    items = [{'id': 'mg-1111', 'type': 'project', 'status': 'done'}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_cancelled_is_hidden(bridget):
-    items = [{'id': 'mg-2222', 'type': 'project', 'tags': ['cancelled']}]
+def test_project_status_shelved_is_hidden(bridget):
+    # status=shelved → Cancelled state, hidden from Projects bucket.
+    items = [{'id': 'mg-2222', 'type': 'project', 'status': 'shelved'}]
     buckets = bridget.categorize_in_flight(items)
     assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
-def test_project_with_kickoff_done_buckets_into_projects(bridget):
-    # mg-f059: during the ds-a57b lifecycle migration window the legacy
-    # mayor-flow `kickoff-done` tag still signals an in-flight project.
-    items = [{'id': 'mg-79e8', 'type': 'project', 'tags': ['kickoff-done']}]
+# -- transitional fallback: status=available + legacy active tag ----------
+# These tests exercise the convention-migration fallback for in-flight
+# projects whose mayor hasn't migrated status='available' → 'claimed' yet.
+# Once all in-flight projects are claimed the fallback (and these tests)
+# can be removed.
+
+def test_project_available_with_in_progress_tag_buckets_via_fallback(bridget):
+    items = [{'id': 'mg-aaac', 'type': 'project', 'status': 'available',
+              'tags': ['in-progress']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert [i['id'] for i in buckets['Projects']] == ['mg-aaac']
+    assert buckets['Designs'] == []
+
+
+def test_project_available_with_kickoff_done_buckets_via_fallback(bridget):
+    items = [{'id': 'mg-79e8', 'type': 'project', 'status': 'available',
+              'tags': ['kickoff-done']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
     assert buckets['Designs'] == []
 
 
-def test_project_with_handed_off_to_mayor_buckets_into_projects(bridget):
-    # mg-f059: legacy mayor-flow `handed-off-to-mayor` is in-flight.
-    items = [{'id': 'mg-4075', 'type': 'project',
+def test_project_available_with_handed_off_to_mayor_buckets_via_fallback(bridget):
+    items = [{'id': 'mg-4075', 'type': 'project', 'status': 'available',
               'tags': ['handed-off-to-mayor']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-4075']
     assert buckets['Designs'] == []
 
 
-def test_project_with_mixed_legacy_tags_buckets_into_projects(bridget):
-    # Realistic mg-4075 shape: kickoff-done + handed-off-to-mayor plus
-    # domain/scope tags. Still in-flight; bucket into Projects.
-    items = [{'id': 'mg-4075', 'type': 'project',
+def test_project_available_with_mixed_legacy_tags_buckets_via_fallback(bridget):
+    # Realistic pj-439c shape: status=available pre-migration, multiple
+    # legacy active tags plus domain/scope tags. Still in-flight; fallback
+    # buckets into Projects.
+    items = [{'id': 'mg-4075', 'type': 'project', 'status': 'available',
               'tags': ['director', 'product', 'gamedev',
                        'handed-off-to-mayor', 'kickoff-done']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-4075']
 
 
-def test_project_with_no_tags_is_hidden(bridget):
-    # Type=project with no in-progress tag → hidden (lives on Roadmap).
-    items = [{'id': 'mg-3333', 'type': 'project'}]
-    buckets = bridget.categorize_in_flight(items)
-    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
-
-
-def test_project_with_in_progress_and_other_tags_buckets_into_projects(bridget):
-    # Domain/scope tags alongside the canonical lifecycle tag do not
-    # affect bucketing — only `in-progress` matters.
-    items = [{'id': 'mg-79e8', 'type': 'project',
+def test_project_available_with_in_progress_and_other_tags_buckets_via_fallback(bridget):
+    # Domain/scope tags alongside the legacy lifecycle tag don't affect
+    # bucketing — only the active-tag set matters in the fallback path.
+    items = [{'id': 'mg-79e8', 'type': 'project', 'status': 'available',
               'tags': ['bridget', 'infra', 'high-priority', 'in-progress']}]
     buckets = bridget.categorize_in_flight(items)
     assert [i['id'] for i in buckets['Projects']] == ['mg-79e8']
     assert buckets['Designs'] == []
+
+
+def test_project_available_with_scheduled_tag_is_hidden(bridget):
+    # 'scheduled' is not in _ACTIVE_PROJECT_TAGS — does not fall through
+    # the fallback. Hidden (lives on Roadmap as Scheduled).
+    items = [{'id': 'mg-fea0', 'type': 'project', 'status': 'available',
+              'tags': ['scheduled']}]
+    buckets = bridget.categorize_in_flight(items)
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
+
+
+def test_project_with_no_status_or_tags_is_hidden(bridget):
+    # Defensive: missing status (shouldn't happen from mg list, but the
+    # status check is None != 'claimed' and None != 'available' so the
+    # item routes to hidden — not crash.
+    items = [{'id': 'mg-3333', 'type': 'project'}]
+    buckets = bridget.categorize_in_flight(items)
+    assert all(buckets[s] == [] for s in bridget.STATUS_SECTION_ORDER)
 
 
 # -- categorize_in_flight: legacy Type=idea suppression --------------------

@@ -9,6 +9,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- Projects bucket reads mg native status field (`claimed` = In
+  Progress) as the primary signal per project-status-tag-convention
+  2026-05-15. Transitional fallback continues to bucket
+  status=`available` projects carrying any legacy active tag
+  (`in-progress`, `kickoff-done`, `handed-off-to-mayor`) during the
+  convention-migration window; fallback collapses once all in-flight
+  projects migrate to status=`claimed`. Closes mg-d3a5. (mg-950b)
 - `preapprove` with no args now reports the `fast` flag alongside
   `enabled`, plus a toggle hint that suggests the command for the
   opposite state. Previously it only said "currently enabled. send
