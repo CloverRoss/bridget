@@ -626,5 +626,75 @@ def test_agent_has_pending_work_calls_mg_list_with_assignee_filter():
     assert '--json' in list_call
 
 
+# -- agent_cycle_paren: stale-window short-circuit dropped (mg-9c3a) --------
+# Before mg-9c3a, a status file whose `updated_at` was older than 30 minutes
+# returned '?, ?' regardless of how informative its last_cycle / next_cycle
+# fields still were. The fix removes that gate so an agent on a long
+# inter-cycle gap (e.g. architect's 60-min nap) still renders real deltas.
+
+def test_agent_cycle_paren_returns_question_marks_when_file_missing():
+    _clear_status('absent')
+    assert bridget.agent_cycle_paren('absent') == '(last cycle ?, next cycle ?)'
+
+
+def test_agent_cycle_paren_returns_question_marks_when_payload_malformed():
+    _write_status('broken', {'unrelated': 'noise'})
+    # Missing required keys → KeyError → except branch.
+    assert bridget.agent_cycle_paren('broken') == '(last cycle ?, next cycle ?)'
+
+
+def test_agent_cycle_paren_renders_upcoming_next_cycle():
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    payload = {
+        'last_cycle': (now - _dt.timedelta(minutes=5)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'next_cycle': (now + _dt.timedelta(minutes=10)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'updated_at': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    _write_status('alive', payload)
+    out = bridget.agent_cycle_paren('alive')
+    assert 'last cycle' in out
+    assert 'next cycle in' in out
+    assert '?' not in out
+
+
+def test_agent_cycle_paren_renders_overdue_next_cycle():
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    payload = {
+        'last_cycle': (now - _dt.timedelta(hours=3)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'next_cycle': (now - _dt.timedelta(hours=2)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'updated_at': (now - _dt.timedelta(hours=3)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    _write_status('overdue', payload)
+    out = bridget.agent_cycle_paren('overdue')
+    assert 'next cycle overdue' in out
+    assert '?' not in out
+
+
+def test_agent_cycle_paren_renders_when_updated_at_older_than_30m_but_next_cycle_upcoming():
+    """Core mg-9c3a regression: an agent on a 60-minute inter-cycle gap has a
+    stale updated_at by definition, but its next_cycle is still in the future
+    and informative. The pre-mg-9c3a 30-minute short-circuit hid that signal
+    behind '?, ?'."""
+    import datetime as _dt
+    now = _dt.datetime.now(_dt.timezone.utc)
+    payload = {
+        'last_cycle': (now - _dt.timedelta(minutes=45)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'next_cycle': (now + _dt.timedelta(minutes=15)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+        'updated_at': (now - _dt.timedelta(minutes=45)).strftime('%Y-%m-%dT%H:%M:%SZ'),
+    }
+    _write_status('napper', payload)
+    out = bridget.agent_cycle_paren('napper')
+    assert 'last cycle' in out
+    assert 'next cycle in' in out
+    assert '?' not in out
+
+
+def test_agent_cycle_paren_no_longer_references_AGENT_STATUS_STALE():
+    """Guard against accidental reintroduction of the 30-minute short-circuit."""
+    assert not hasattr(bridget, 'AGENT_STATUS_STALE')
+
+
 if __name__ == '__main__':
     sys.exit(pytest.main([__file__, '-v']))

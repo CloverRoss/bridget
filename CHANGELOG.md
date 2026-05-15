@@ -5,6 +5,24 @@ All notable changes to bridget will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- `preapprove` with no args now reports the `fast` flag alongside
+  `enabled`, plus a toggle hint that suggests the command for the
+  opposite state. Previously it only said "currently enabled. send
+  'preapprove false' to disable", which hid whether fast mode was on
+  and silently dropped the discoverability path to fast mode from the
+  disabled branch. (mg-03d4)
+- `agents` view: dropped the 30-minute `AGENT_STATUS_STALE`
+  short-circuit in `agent_cycle_paren`. Agents with long inter-cycle
+  gaps (e.g. architect's 60-min nap) now render real `last cycle … /
+  next cycle …` deltas instead of `?, ?`; the overdue branch already
+  signals 'agent likely dead' via 'next cycle overdue Xh'. Re-lands
+  mg-9c3a's fix in the bridget repo (mg-777f mistakenly landed it in
+  the legacy pogo-discord-bridge copy). (mg-9c3a re-land)
+
 ## [4.46.0] - 2026-05-14
 
 ### Fixed

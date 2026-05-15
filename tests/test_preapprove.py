@@ -102,6 +102,9 @@ def test_preapprove_no_args_when_disabled_includes_next_action_hint(bridget):
     assert 'currently disabled' in lowered
     assert 'preapprove true' in lowered
     assert 'to enable' in lowered
+    # Disabled response also surfaces the fast-mode hint so users discover it.
+    assert 'preapprove true fast' in lowered
+    assert 'fast mode' in lowered
 
 
 def test_preapprove_no_args_when_disabled_by_default_includes_next_action_hint(bridget):
@@ -111,24 +114,34 @@ def test_preapprove_no_args_when_disabled_by_default_includes_next_action_hint(b
     assert 'currently disabled' in lowered
     assert 'preapprove true' in lowered
     assert 'to enable' in lowered
+    assert 'preapprove true fast' in lowered
 
 
-def test_preapprove_no_args_when_enabled_includes_next_action_hint(bridget):
+def test_preapprove_no_args_when_enabled_fast_off_shows_fast_state(bridget):
     bridget.save_preapproval({'enabled': True, 'fast': False})
     reply = bridget.handle_command('preapprove')
     lowered = reply.lower()
     assert 'currently enabled' in lowered
+    assert 'fast: off' in lowered
     assert 'preapprove false' in lowered
     assert 'to disable' in lowered
+    # Toggle hint: from fast-off, the suggested command turns fast on.
+    assert 'preapprove true fast' in lowered
+    assert 'fast on' in lowered
 
 
-def test_preapprove_no_args_when_fast_enabled_includes_next_action_hint(bridget):
+def test_preapprove_no_args_when_enabled_fast_on_shows_fast_state(bridget):
     bridget.save_preapproval({'enabled': True, 'fast': True})
     reply = bridget.handle_command('preapprove')
     lowered = reply.lower()
     assert 'currently enabled' in lowered
+    assert 'fast: on' in lowered
     assert 'preapprove false' in lowered
     assert 'to disable' in lowered
+    # Toggle hint: from fast-on, the suggested command turns fast back off.
+    # The toggle command is the bare 'preapprove true' (no 'fast' suffix).
+    assert "'preapprove true'" in reply
+    assert 'fast off' in lowered
 
 
 def test_preapprove_true_enables_with_fast_off(bridget):

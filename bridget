@@ -65,7 +65,6 @@ MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 _watchers_started = False
 DESIGNS_DIR = HOME / 'Library' / 'Mobile Documents' / 'com~apple~CloudDocs' / 'Pogo' / 'designs'
 AGENT_STATUS_DIR = HOME / '.pogo' / 'agent-status'
-AGENT_STATUS_STALE = datetime.timedelta(minutes=30)
 # Mtime guard for the optional self-reported badge label. Past this window the
 # JSON is treated as stale and the badge is dropped — derived state still
 # renders, just without the trailing label.
@@ -927,15 +926,13 @@ def agent_state(name: str, agent_list_entry: dict,
 def agent_cycle_paren(name: str) -> str:
     """Return '(last cycle X ago, next cycle in Y)' read from
     ~/.pogo/agent-status/<name>.json, or '(last cycle ?, next cycle ?)' if the
-    file is missing, malformed, or its updated_at is older than 30 minutes."""
+    file is missing or malformed."""
+    # No 'stale' short-circuit: the overdue/upcoming branch below already signals 'agent likely dead' via 'next cycle overdue Xh'.
     try:
         data = json.loads((AGENT_STATUS_DIR / f'{name}.json').read_text())
         last = _parse_iso_utc(data['last_cycle'])
         nxt = _parse_iso_utc(data['next_cycle'])
-        updated = _parse_iso_utc(data['updated_at'])
         now = datetime.datetime.now(datetime.timezone.utc)
-        if now - updated > AGENT_STATUS_STALE:
-            return '(last cycle ?, next cycle ?)'
         last_ago = _humanize_seconds(max(0, (now - last).total_seconds()))
         delta = (nxt - now).total_seconds()
         if delta < 0:
@@ -2237,8 +2234,12 @@ def handle_command(text: str) -> str | list[str]:
         if not rest:
             state = load_preapproval()
             if state['enabled']:
-                return "pre-approval: currently enabled. send 'preapprove false' to disable"
-            return "pre-approval: currently disabled. send 'preapprove true' to enable"
+                fast_word = 'on' if state.get('fast') else 'off'
+                toggle_cmd = 'preapprove true' if state.get('fast') else 'preapprove true fast'
+                toggle_target = 'off' if state.get('fast') else 'on'
+                return (f"pre-approval: currently enabled (fast: {fast_word}). "
+                        f"send 'preapprove false' to disable, or '{toggle_cmd}' to switch fast {toggle_target}.")
+            return "pre-approval: currently disabled. send 'preapprove true' to enable, or 'preapprove true fast' for fast mode."
         usage = "Usage: `preapprove [true [fast] | false]`"
         if rest[0] not in ('true', 'false'):
             return usage
