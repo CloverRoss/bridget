@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `agents` view now surfaces per-agent ticket-in-progress duration and an
+  idle-vs-stuck signal. Bridget tracks each agent's `(state, label)` in a
+  sidecar at `~/.pogo/bridget-state-history.json`, rewritten on every
+  `agents` invocation. Busy rows append `(Nm on <label>)` (or
+  `(busy Nm)` when no label is set); idle rows append `(idle Nm)`. A
+  busy agent whose `(state, label)` has held past `BRIDGET_STUCK_MIN`
+  minutes (default 30, env-overridable) renders with 🟠 in place of
+  🟡 plus a `long-running, check for stall` note so a wedge stands
+  out without needing a separate diagnose call. Dead agents are pruned
+  from the sidecar naturally on the next render. (ds-25d7 / mg-f6a2)
+
 ### Fixed
 
 - Projects bucket reads mg native status field (`claimed` = In

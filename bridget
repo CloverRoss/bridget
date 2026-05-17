@@ -70,6 +70,23 @@ AGENT_STATUS_DIR = HOME / '.pogo' / 'agent-status'
 # renders, just without the trailing label.
 AGENT_STATUS_FRESH = datetime.timedelta(seconds=120)
 
+# State-history sidecar (ds-25d7) — `{agent: {state, label, since}}`. Diffed on
+# every `agents` render to compute "Nm on <label>" (busy) / "(idle Nm)" and to
+# flag stuck busy agents whose (state, label) tuple has held past
+# BRIDGET_STUCK_MIN. Rewritten in full on each invocation, which also prunes
+# dead agents naturally.
+STATE_HISTORY_FILE = HOME / '.pogo' / 'bridget-state-history.json'
+# Stuck threshold for the agents view: a `busy` agent whose (state, label)
+# pair has held this long renders with a 🟠 warning glyph in place of 🟡 and
+# a trailing "long-running, check for stall" note. Default 30m matches
+# ds-25d7. Override via `BRIDGET_STUCK_MIN` env var when legitimate long
+# work (polecat batch jobs etc.) routinely exceeds 30m and you want fewer
+# false-stalls.
+try:
+    BRIDGET_STUCK_MIN = max(1, int(os.environ.get('BRIDGET_STUCK_MIN', '30')))
+except ValueError:
+    BRIDGET_STUCK_MIN = 30
+
 # Maps `pogo agent diagnose --json` health → bridget agents-view state.
 # `healthy` is intentionally absent: pogod's diagnose only emits healthy or
 # stalled for live crew agents, so a static map would render every alive
@@ -921,6 +938,76 @@ def agent_state(name: str, agent_list_entry: dict,
     derived = compute_agent_state(name)
     state = derived['state']
     return (STATE_EMOJI[state], state, derived['badge'])
+
+
+def _load_state_history() -> dict:
+    """Read the bridget state-history sidecar at STATE_HISTORY_FILE.
+
+    Returns `{}` on any error (missing file, malformed JSON, non-dict
+    top-level). First-run after a deploy naturally falls through to this
+    empty dict — every agent renders at elapsed=0, then the next
+    invocation populates real deltas. No noisy logging here; this is a
+    read-only optimization, not a correctness path."""
+    try:
+        data = json.loads(STATE_HISTORY_FILE.read_text())
+    except Exception:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_state_history(history: dict) -> None:
+    """Atomically write the state-history sidecar. Failures are swallowed
+    silently — a failed write must never crash the agents view, and the
+    next invocation just sees stale data and resets."""
+    try:
+        STATE_HISTORY_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_HISTORY_FILE.parent / (STATE_HISTORY_FILE.name + '.tmp')
+        tmp.write_text(json.dumps(history, indent=2, sort_keys=True) + '\n')
+        os.replace(tmp, STATE_HISTORY_FILE)
+    except Exception as e:
+        print(f'_save_state_history: {e}', file=sys.stderr)
+
+
+def _diff_history(prior: dict | None, state: str, label: str | None,
+                  now: datetime.datetime) -> tuple[dict, float]:
+    """Compute the new history entry + elapsed seconds for one agent (ds-25d7).
+
+    If prior matches current (state, label), the agent has been on the
+    same thing since `prior.since`: carry the entry forward, return
+    elapsed = now - since. Otherwise reset `since = now` and return
+    elapsed = 0.
+
+    A prior entry with an unparseable `since` is treated as a state
+    change so a corrupted sidecar self-heals on the next render rather
+    than poisoning every future read."""
+    if prior and prior.get('state') == state and prior.get('label') == label:
+        try:
+            since = _parse_iso_utc(prior['since'])
+            return (prior, max(0.0, (now - since).total_seconds()))
+        except Exception:
+            pass
+    return (
+        {
+            'state': state,
+            'label': label,
+            'since': now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+        },
+        0.0,
+    )
+
+
+def _humanize_minutes(seconds: float) -> str:
+    """Coarse minute-granularity duration for the agents view.
+
+    `<1h` renders as `Nm`; `≥1h` renders as `XhYm`. Seconds are hidden:
+    at the agents-view granularity (rendered on demand, not streamed)
+    sub-minute resolution is noise, and `(0m on …)` for a just-flipped
+    state is fine — the next render will tick up."""
+    s = max(0, int(seconds))
+    if s < 3600:
+        return f'{s // 60}m'
+    h, rem = divmod(s, 3600)
+    return f'{h}h{rem // 60}m'
 
 
 def agent_cycle_paren(name: str) -> str:
@@ -2058,14 +2145,37 @@ def handle_command(text: str) -> str | list[str]:
             return '🤖 No crew agents registered.'
         lines = [f'🤖 **Crew agents ({len(agents_list)}):**']
         claims_by_assignee = fetch_mg_claims_by_assignee()
+        # ds-25d7 — duration + stuck signal. Load prior snapshot once, rebuild
+        # the entire history dict from the live roster (prunes dead agents),
+        # write it back at end.
+        prior_history = _load_state_history()
+        new_history: dict = {}
+        now = datetime.datetime.now(datetime.timezone.utc)
+        stuck_seconds = BRIDGET_STUCK_MIN * 60
         for a in agents_list:
             name = a.get('name', '?')
             emoji, label, badge = agent_state(name, a, claims_by_assignee)
+            new_history[name], elapsed = _diff_history(
+                prior_history.get(name), label, badge, now,
+            )
             cycle = agent_cycle_paren(name) if label != 'offline' else ''
             badge_str = f' — {badge}' if badge else ''
+            # Duration appendix is meaningful only for busy/idle. Stalled +
+            # offline carry their own signal already; appending "Nm" there
+            # would just shout at the user.
+            suffix = ''
+            if label == 'busy':
+                dur = _humanize_minutes(elapsed)
+                suffix = f' ({dur} on {badge})' if badge else f' (busy {dur})'
+                if elapsed > stuck_seconds:
+                    emoji = '🟠'
+                    suffix += ' — long-running, check for stall'
+            elif label == 'idle':
+                suffix = f' (idle {_humanize_minutes(elapsed)})'
             lines.append(
-                f'  • {emoji} {label:<7} {name:<12}{badge_str}  {cycle}'.rstrip()
+                f'  • {emoji} {label:<7} {name:<12}{badge_str}{suffix}  {cycle}'.rstrip()
             )
+        _save_state_history(new_history)
         return '\n'.join(lines)
 
     if low.startswith('nudge '):
