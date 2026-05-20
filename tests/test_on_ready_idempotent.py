@@ -1,12 +1,18 @@
 """Tests for on_ready idempotence on Discord reconnect (mg-f7c5).
 
 Discord re-fires on_ready on every gateway reconnect (e.g., laptop wake).
-Without guarding, each fire spawned 3 new watcher tasks, so after N
-reconnects the user received N× duplicate DMs of every agent mail. The fix
-gates the spawn step on a module-level `_watchers_started` flag; subsequent
-on_ready fires log a reconnect notice and return early. The watcher
-coroutines themselves survive reconnects (they sleep between ticks; the
-gateway reconnects under them), so only the spawn step needs guarding.
+Without guarding, each fire spawned a fresh set of watcher tasks, so after
+N reconnects the user received N× duplicate DMs of every agent mail. The
+fix gates the spawn step on a module-level `_watchers_started` flag;
+subsequent on_ready fires log a reconnect notice and return early. The
+watcher coroutines themselves survive reconnects (they sleep between
+ticks; the gateway reconnects under them), so only the spawn step needs
+guarding.
+
+The watcher count is whatever bridget currently spawns (4 as of mg-c05a:
+watch_mailbox, watch_task_transitions, watch_idea_claims, watch_chat).
+Tests reference EXPECTED_WATCHERS so adding a new watcher in the future
+only requires bumping the constant, not chasing magic numbers.
 """
 import asyncio
 import importlib.util
@@ -19,6 +25,10 @@ import pytest
 
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / 'bridget'
+
+# Count of background watchers on_ready spawns. Bump when adding a new
+# watcher task in on_ready (mg-c05a: watch_chat brought this to 4).
+EXPECTED_WATCHERS = 4
 
 
 def _load_bridget(home: Path):
@@ -59,13 +69,14 @@ def _install_fakes(bridget, monkeypatch):
     monkeypatch.setattr(bridget, 'watch_mailbox', MagicMock(return_value=object()))
     monkeypatch.setattr(bridget, 'watch_task_transitions', MagicMock(return_value=object()))
     monkeypatch.setattr(bridget, 'watch_idea_claims', MagicMock(return_value=object()))
+    monkeypatch.setattr(bridget, 'watch_chat', MagicMock(return_value=object()))
     return fake_client
 
 
-def test_on_ready_first_fire_spawns_three_watchers(bridget, monkeypatch):
+def test_on_ready_first_fire_spawns_all_watchers(bridget, monkeypatch):
     fake_client = _install_fakes(bridget, monkeypatch)
     asyncio.run(bridget.on_ready())
-    assert fake_client.loop.create_task.call_count == 3
+    assert fake_client.loop.create_task.call_count == EXPECTED_WATCHERS
     assert bridget._watchers_started is True
 
 
@@ -73,9 +84,9 @@ def test_on_ready_second_fire_does_not_respawn(bridget, monkeypatch, capsys):
     fake_client = _install_fakes(bridget, monkeypatch)
     asyncio.run(bridget.on_ready())
     asyncio.run(bridget.on_ready())
-    # Still exactly 3 create_task calls after the reconnect re-fire — the
-    # guard short-circuits before the second batch of spawns.
-    assert fake_client.loop.create_task.call_count == 3
+    # Still exactly EXPECTED_WATCHERS create_task calls after the reconnect
+    # re-fire — the guard short-circuits before the second batch of spawns.
+    assert fake_client.loop.create_task.call_count == EXPECTED_WATCHERS
     # fetch_user must not run a second time either; it's the work the guard
     # is protecting against (along with the spawn step).
     assert fake_client.fetch_user.await_count == 1
@@ -83,10 +94,10 @@ def test_on_ready_second_fire_does_not_respawn(bridget, monkeypatch, capsys):
     assert 'on_ready re-fired' in out
 
 
-def test_on_ready_three_reconnects_still_three_watchers(bridget, monkeypatch):
-    # The bug's pathological case: N reconnects → 3N watchers without the
-    # guard. Verify the guard holds across multiple re-fires.
+def test_on_ready_three_reconnects_still_one_set_of_watchers(bridget, monkeypatch):
+    # The bug's pathological case: N reconnects → N×EXPECTED_WATCHERS without
+    # the guard. Verify the guard holds across multiple re-fires.
     fake_client = _install_fakes(bridget, monkeypatch)
     for _ in range(4):
         asyncio.run(bridget.on_ready())
-    assert fake_client.loop.create_task.call_count == 3
+    assert fake_client.loop.create_task.call_count == EXPECTED_WATCHERS

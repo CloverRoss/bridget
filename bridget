@@ -63,6 +63,19 @@ MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 # on gateway reconnect (e.g., after laptop sleep). The watchers themselves
 # survive reconnects; only the spawn step needs guarding (mg-f7c5).
 _watchers_started = False
+
+# Chat inbox (mg-c05a — Robin port item 6). File-drop transport from
+# `bridget chat <agent> <body>` CLI to a DM. Mirrors Robin's chat channel
+# pattern: the CLI drops a maildir-style file in new/, the daemon polls
+# and emits each as a DM, then moves the file to cur/ (no separate seen
+# set needed — the move is the dedup). Override the parent dir with
+# POGO_BRIDGET_CHAT_DIR (testing).
+BRIDGET_CHAT_DIR = Path(os.environ.get(
+    'POGO_BRIDGET_CHAT_DIR',
+    str(HOME / '.macguffin' / 'mail' / 'bridget-chat'),
+))
+CHAT_FILENAME_AGENT_RE = re.compile(r'[^A-Za-z0-9._-]')
+
 DESIGNS_DIR = HOME / 'Library' / 'Mobile Documents' / 'com~apple~CloudDocs' / 'Pogo' / 'designs'
 AGENT_STATUS_DIR = HOME / '.pogo' / 'agent-status'
 # Mtime guard for the optional self-reported badge label. Past this window the
@@ -419,6 +432,88 @@ def _is_known_verb(text: str) -> bool:
 def die(msg: str, code: int = 1) -> None:
     print(f"bridget: {msg}", file=sys.stderr)
     sys.exit(code)
+
+
+# --- chat CLI (mg-c05a — Robin port item 6) -------------------------------
+#
+# `bridget chat <agent_name> <body...>` drops a maildir-style file into
+# BRIDGET_CHAT_DIR/new/. The running bridget daemon's watch_chat() task
+# polls that dir and emits each entry as a DM in `[From <agent>]: <body>`
+# form, then moves the file to cur/ (the move is the dedup mechanism).
+#
+# Sender attribution comes from the explicit <agent_name> argument — the
+# crew agent or polecat invoking the CLI is responsible for passing its
+# own name, not derived from any process identity. This mirrors Robin's
+# robin-CLI pattern (/opt/pogo/robin/bin/robin).
+#
+# Body is joined from all remaining positional args with single spaces.
+# Long bodies are kept whole here; the daemon-side send uses
+# send_dm_chunked which splits across multiple DMs at paragraph / line /
+# fence boundaries (mg-a3ef).
+
+def write_chat_drop(
+    agent_name: str,
+    body: str,
+    inbox_dir: Path | None = None,
+) -> Path:
+    """Drop a chat-mail file for the bridget daemon to pick up.
+
+    File format: `From: <agent>\\nDate: <iso>\\n\\n<body>\\n` — the same
+    minimal mail envelope parse_mail() already understands. Returns the
+    final path. Filename is `<ns>.<pid>.<safe-agent>` where `safe-agent`
+    has non-`[A-Za-z0-9._-]` chars collapsed to `_` so a hostile sender
+    name can't traverse the filesystem.
+
+    Uses a `<final>.tmp` write-then-rename so the daemon never sees a
+    partially-written file in new/.
+    """
+    inbox = (inbox_dir or BRIDGET_CHAT_DIR) / 'new'
+    inbox.mkdir(parents=True, exist_ok=True)
+    safe = CHAT_FILENAME_AGENT_RE.sub('_', agent_name) or 'unknown'
+    ts = time.time_ns()
+    fname = f'{ts}.{os.getpid()}.{safe}'
+    tmp = inbox / (fname + '.tmp')
+    final = inbox / fname
+    now_iso = datetime.datetime.now(datetime.timezone.utc).strftime(
+        '%Y-%m-%dT%H:%M:%SZ'
+    )
+    content = f'From: {agent_name}\nDate: {now_iso}\n\n{body}\n'
+    tmp.write_text(content, encoding='utf-8')
+    os.rename(tmp, final)
+    return final
+
+
+def _chat_cli_main(argv: list[str]) -> int:
+    """Handle `bridget chat <agent_name> <body...>` — drop a chat file.
+
+    Exit codes: 0 on success, 2 on usage error (missing args / empty body
+    / empty agent name). Pure stdlib — must work in venvs without
+    discord.py installed.
+    """
+    if len(argv) < 2:
+        print(
+            'bridget: usage: bridget chat <agent_name> <body...>',
+            file=sys.stderr,
+        )
+        return 2
+    agent_name = argv[0].strip()
+    if not agent_name:
+        print('bridget: chat agent_name cannot be empty', file=sys.stderr)
+        return 2
+    body = ' '.join(argv[1:]).strip()
+    if not body:
+        print('bridget: chat body cannot be empty', file=sys.stderr)
+        return 2
+    write_chat_drop(agent_name, body)
+    return 0
+
+
+# Top-level CLI fast path. Runs when bridget is invoked as a script with
+# `chat` as the first positional arg — short-circuits BEFORE load_config
+# + the discord import below, so the CLI works in environments without
+# bridget's full venv (polecat subprocess calls, agent contexts).
+if __name__ == '__main__' and len(sys.argv) >= 2 and sys.argv[1] == 'chat':
+    sys.exit(_chat_cli_main(sys.argv[2:]))
 
 
 def load_env_file(path: Path) -> dict:
@@ -1227,6 +1322,53 @@ async def watch_task_transitions(user: discord.User):
             save_task_states(states)
         except Exception as e:
             print(f'watch_task_transitions loop error: {e}', file=sys.stderr)
+        await asyncio.sleep(POLL_INTERVAL)
+
+
+def format_chat_dm(agent_name: str, body: str) -> str:
+    """Render the user-facing DM line for an agent → user chat message.
+
+    Format: `[From <agent-name>]: <body>` (mg-c05a). Trailing whitespace
+    on the body is stripped so the DM doesn't show a dangling blank line
+    after parse_mail's body extraction.
+    """
+    return f'[From {agent_name}]: {body.rstrip()}'
+
+
+async def watch_chat(user) -> None:
+    """Poll BRIDGET_CHAT_DIR/new for chat drops; DM each then move to cur/.
+
+    Mirrors Robin's poll_chat_inbox: agents call `bridget chat <name>
+    <body>` which writes a file to new/; this loop picks it up, formats
+    `[From <name>]: <body>` and emits via send_dm_chunked (mg-a3ef
+    handles >1800-char bodies). On success the file is renamed into cur/
+    so a daemon restart won't re-deliver. Per-file errors leave the file
+    in new/ for retry on the next tick.
+    """
+    new_dir = BRIDGET_CHAT_DIR / 'new'
+    cur_dir = BRIDGET_CHAT_DIR / 'cur'
+    while not client.is_closed():
+        try:
+            new_dir.mkdir(parents=True, exist_ok=True)
+            cur_dir.mkdir(parents=True, exist_ok=True)
+            for fname in sorted(p.name for p in new_dir.iterdir() if p.is_file()):
+                if fname.endswith('.tmp'):
+                    continue
+                src = new_dir / fname
+                dst = cur_dir / fname
+                try:
+                    mail = parse_mail(src.read_text(encoding='utf-8',
+                                                   errors='replace'))
+                    msg = format_chat_dm(mail['from'], mail['body'])
+                    await send_dm_chunked(user, msg)
+                    os.rename(src, dst)
+                except discord.HTTPException as e:
+                    _log(f'HTTPException in watch_chat send ({fname}): {e}')
+                except Exception as e:
+                    print(f'watch_chat per-file error ({fname}): {e}',
+                          file=sys.stderr)
+        except Exception as e:
+            print(f'watch_chat loop error: {e}', file=sys.stderr)
         await asyncio.sleep(POLL_INTERVAL)
 
 
@@ -2840,6 +2982,7 @@ async def on_ready():
     client.loop.create_task(watch_mailbox(user))
     client.loop.create_task(watch_task_transitions(user))
     client.loop.create_task(watch_idea_claims(user))
+    client.loop.create_task(watch_chat(user))
     _watchers_started = True
 
 

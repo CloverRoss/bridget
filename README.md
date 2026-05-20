@@ -157,6 +157,37 @@ drops once chat-relay lands.
 bridget only acts on DMs from the user whose ID is in `DISCORD_USER_ID`;
 messages from anyone else are ignored.
 
+## Agent → user chat (CLI)
+
+Crew agents (and polecats) can push a DM to the user by invoking the
+bridget script as a CLI:
+
+```
+bridget chat <agent_name> <body...>
+```
+
+This drops a maildir-style file in `~/.macguffin/mail/bridget-chat/new/`
+(override the parent dir with `POGO_BRIDGET_CHAT_DIR`); the running
+bridget daemon polls that directory on the standard 5-second tick and
+emits each entry as a DM in `[From <agent-name>]: <body>` form. Long
+bodies are split into multiple sequential DMs by `send_dm_chunked`
+(paragraph / line / fence-aware — see mg-a3ef).
+
+- Sender attribution comes from the explicit `<agent_name>` argument,
+  not process identity — the caller passes its own crew name or polecat
+  work-item id.
+- Body args after `<agent_name>` are joined with single spaces. Empty
+  body or empty agent name exits 2 with a usage line on stderr.
+- The CLI path short-circuits before `load_config` and the `discord`
+  import, so it runs in environments without bridget's full venv
+  installed (polecat subprocess calls, ephemeral agent contexts).
+- Successful delivery moves the file from `new/` to `cur/`, so a daemon
+  restart doesn't redeliver. On a send failure the file stays in `new/`
+  and the next tick retries.
+
+Robin's equivalent on Ocean is `/opt/pogo/robin/bin/robin <body>`; the
+bridget CLI follows the same file-drop transport.
+
 ## Inbox vs status
 
 bridget splits the global pull view into two commands so "things I

@@ -9,6 +9,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `bridget chat <agent_name> <body...>` CLI subcommand lets a crew agent
+  or polecat send a DM to the user. Drops a maildir-style file in
+  `~/.macguffin/mail/bridget-chat/new/` (override with
+  `POGO_BRIDGET_CHAT_DIR`); the running bridget daemon's `watch_chat`
+  task polls that dir on the standard 5s tick, emits each entry as a DM
+  in `[From <agent-name>]: <body>` form via `send_dm_chunked` (long
+  bodies are split per mg-a3ef), then moves the file into `cur/` so a
+  daemon restart doesn't redeliver. The CLI path runs entirely before
+  `load_config` + the `discord` import, so agents can invoke it without
+  bridget's full venv installed. Sender attribution is the explicit
+  `<agent_name>` argument — the caller is responsible for passing its
+  own crew/polecat name. (mg-c05a, Robin port item 6)
+
 - `send_dm_chunked(target, body, chunk_size=1800)` helper splits long DMs
   into multiple sequential messages instead of truncating with an ellipsis.
   Replaces direct `user.send` / `channel.send` calls in the watch_mailbox,
