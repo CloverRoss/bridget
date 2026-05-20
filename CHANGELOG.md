@@ -9,6 +9,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `/route [<agent>]` slash command selects which crew agent receives the
+  user's non-slash DMs. Valid agents: `mayor`, `director`, `architect`,
+  `doctor`. Default is `mayor`. With no argument, `/route` reports the
+  current target plus the valid-agents list. Selection is persisted to
+  `~/.pogo/bridget-route.json` (flat `{"route": "<agent>", "updated_at":
+  "<iso>"}` — single-user bridget, so no per-user keying like Robin's
+  state.json) and survives bridget restart. Missing/corrupt/unknown-agent
+  on read silently falls back to the default so a fresh install just
+  works. The chat-relay buffer that consumes this route lands in a
+  follow-up (mg-c869, Robin port item 1). (mg-6b2b, Robin port item 5)
+
 - `bridget chat <agent_name> <body...>` CLI subcommand lets a crew agent
   or polecat send a DM to the user. Drops a maildir-style file in
   `~/.macguffin/mail/bridget-chat/new/` (override with

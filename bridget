@@ -59,6 +59,14 @@ PREAPPROVAL_FILE = HOME / '.pogo' / 'preapproval.json'
 TASK_STATES_FILE = HOME / '.pogo' / 'bridget.task-states.json'
 IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
 MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
+# Chat-route sidecar (mg-6b2b — Robin port item 5). Persists which crew
+# agent receives non-slash chat messages. Single-user bridget so the
+# schema is a flat `{"route": "<agent>", "updated_at": "<iso>"}` — no
+# per-user keying like Robin's state.json. Missing/corrupt → DEFAULT_ROUTE
+# (mayor) on lookup so a fresh install just works.
+ROUTE_FILE = HOME / '.pogo' / 'bridget-route.json'
+ROUTE_VALID_AGENTS = ('mayor', 'director', 'architect', 'doctor')
+DEFAULT_ROUTE = 'mayor'
 # Guard against duplicate watcher spawn when Discord re-fires on_ready
 # on gateway reconnect (e.g., after laptop sleep). The watchers themselves
 # survive reconnects; only the spawn step needs guarding (mg-f7c5).
@@ -296,6 +304,17 @@ COMMANDS = [
         'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
     },
     {
+        'name': 'route',
+        'signature': '/route [<agent>]',
+        'description': (
+            'set or show the crew agent that non-slash DMs target. '
+            'valid agents: mayor / director / architect / doctor. '
+            'default is mayor; selection persists across bridget '
+            'restart via `~/.pogo/bridget-route.json`. with no argument '
+            'shows the current route + valid agents list. (mg-6b2b)'
+        ),
+    },
+    {
         'name': 'librarian sync',
         'signature': '/librarian sync <space> [page-id]',
         'description': (
@@ -402,6 +421,7 @@ COMMAND_VERBS = frozenset({
     'quiet', 'preapprove', 'spend',
     'librarian', 'accountant',
     'inbox', 'status',
+    'route',
 })
 # `idea:` and `bug:` carry the colon as part of the verb (no whitespace
 # between verb and payload is required), so they need prefix matching
@@ -704,6 +724,35 @@ def save_preapproval(state: dict) -> None:
     tmp = PREAPPROVAL_FILE.parent / (PREAPPROVAL_FILE.name + '.tmp')
     tmp.write_text(json.dumps(out, indent=2) + '\n')
     os.replace(tmp, PREAPPROVAL_FILE)
+
+
+def load_route() -> str:
+    """Read ~/.pogo/bridget-route.json. Missing/corrupt/unknown-agent → DEFAULT_ROUTE."""
+    if not ROUTE_FILE.exists():
+        return DEFAULT_ROUTE
+    try:
+        d = json.loads(ROUTE_FILE.read_text())
+    except Exception as e:
+        print(f'load_route parse error: {e}', file=sys.stderr)
+        return DEFAULT_ROUTE
+    if not isinstance(d, dict):
+        return DEFAULT_ROUTE
+    agent = d.get('route')
+    if not isinstance(agent, str) or agent not in ROUTE_VALID_AGENTS:
+        return DEFAULT_ROUTE
+    return agent
+
+
+def save_route(agent: str) -> None:
+    """Atomically write ~/.pogo/bridget-route.json. Caller guarantees agent is valid."""
+    ROUTE_FILE.parent.mkdir(parents=True, exist_ok=True)
+    out = {
+        'route': agent,
+        'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
+    }
+    tmp = ROUTE_FILE.parent / (ROUTE_FILE.name + '.tmp')
+    tmp.write_text(json.dumps(out, indent=2) + '\n')
+    os.replace(tmp, ROUTE_FILE)
 
 
 def load_task_states() -> tuple[dict, bool]:
@@ -2762,6 +2811,26 @@ def _dispatch_command(text: str) -> str | list[str]:
             return usage
         save_preapproval({'enabled': False, 'fast': False})
         return "✓ pre-approval: disabled."
+
+    if low == 'route' or low.startswith('route '):
+        parts = text.split(None, 1)
+        if len(parts) == 1:
+            current = load_route()
+            valid = ', '.join(ROUTE_VALID_AGENTS)
+            return (
+                f"Current chat route: **{current}**\n"
+                f"Valid agents: {valid}\n"
+                f"Use `/route <agent>` to change."
+            )
+        arg = parts[1].strip().lower()
+        if arg not in ROUTE_VALID_AGENTS:
+            valid = ', '.join(ROUTE_VALID_AGENTS)
+            return f"Unknown agent `{arg}`. Valid agents: {valid}."
+        save_route(arg)
+        return (
+            f"✓ chat route set to **{arg}** — "
+            f"non-slash messages will go to {arg}."
+        )
 
     if low == 'spend' or low.startswith('spend '):
         # Ignore any args — design reserves them for future use.
