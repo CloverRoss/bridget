@@ -183,27 +183,27 @@ def _robin_only_reply(verb: str) -> str:
 COMMANDS = [
     {
         'name': 'approve',
-        'signature': 'approve mg-XXXX (or dr-XXXX)',
+        'signature': '/approve mg-XXXX (or dr-XXXX)',
         'description': 'approve a design (auto-clears related mails)',
     },
     {
         'name': 'reject',
-        'signature': 'reject mg-XXXX <reason> (or dr-XXXX)',
+        'signature': '/reject mg-XXXX <reason> (or dr-XXXX)',
         'description': 'shelve idea + clear mails',
     },
     {
         'name': 'revise',
-        'signature': 'revise mg-XXXX <feedback> (or dr-XXXX)',
+        'signature': '/revise mg-XXXX <feedback> (or dr-XXXX)',
         'description': 'request changes (auto-unshelves; clears mails)',
     },
     {
         'name': 'explain',
-        'signature': 'explain mg-XXXX <what> (or dr-XXXX)',
+        'signature': '/explain mg-XXXX <what> (or dr-XXXX)',
         'description': 'ask architect to elaborate without redesigning',
     },
     {
         'name': 'kickoff',
-        'signature': 'kickoff pj-XXXX',
+        'signature': '/kickoff pj-XXXX',
         'description': (
             'flip a Project from ready-for-kickoff to in-progress (mayor handles). '
             'Restricted to the pj- prefix (projects only) — legacy mg- projects must '
@@ -214,77 +214,77 @@ COMMANDS = [
     },
     {
         'name': 'read',
-        'signature': 'read m<N> (or dr-XXXX)',
-        'description': 'show a mail. `mN` indices come from the most recent `inbox` output and may shift if new mail arrives in between. for designs awaiting approval, use `open mg-XXXX` instead — `read mg-XXXX` only returns a hint. (approval/Report mails stay unread until you reply with approve/reject/revise/explain)',
+        'signature': '/read m<N> (or dr-XXXX)',
+        'description': 'show a mail. `mN` indices come from the most recent `/inbox` output and may shift if new mail arrives in between. for designs awaiting approval, use `/open mg-XXXX` instead — `/read mg-XXXX` only returns a hint. (approval/Report mails stay unread until you reply with /approve / /reject / /revise / /explain)',
     },
     {
         'name': 'open',
-        'signature': 'open mg-XXXX',
-        'description': 'return a Notes-app pointer for a design (use `read` for mail message-ids). reply is `Notes app → Pogo Designs → <id>: <title>`; the architect publishes each design to the Notes folder on save. if mg show fails (unknown id) replies `open: mg item mg-XXXX not found`. forward-only: designs filed before this change land are not in Notes.',
+        'signature': '/open mg-XXXX',
+        'description': 'return a Notes-app pointer for a design (use `/read` for mail message-ids). reply is `Notes app → Pogo Designs → <id>: <title>`; the architect publishes each design to the Notes folder on save. if mg show fails (unknown id) replies `open: mg item mg-XXXX not found`. forward-only: designs filed before this change land are not in Notes.',
     },
     {
         'name': 'idea:',
-        'signature': 'idea: [tag] [tag] ... <text>',
+        'signature': '/idea: [tag] [tag] ... <text>',
         'description': 'file an idea with optional scope tags (e.g. `[bridget]`)',
     },
     {
         'name': 'bug:',
-        'signature': 'bug: [tag] [tag] ... <text>',
+        'signature': '/bug: [tag] [tag] ... <text>',
         'description': "file a bug with optional scope tags. Use `[critical]` for crash-class bugs that should skip architect's design phase — routes directly to mayor. (existing software is broken — not a new feature.)",
     },
     {
         'name': 'mail',
-        'signature': 'mail <subject>\\n<body>',
+        'signature': '/mail <subject>\\n<body>',
         'description': 'send a mail (without a newline, the whole text becomes the subject)',
     },
     {
         'name': 'dismiss',
-        'signature': 'dismiss mg-XXXX (or dr-XXXX)',
+        'signature': '/dismiss mg-XXXX (or dr-XXXX)',
         'description': 'mark all unread mail about an id as read (actionable mails — design approvals and Reports — require the matching approve/reject/revise/explain reply instead)',
     },
     {
         'name': 'dismiss all',
-        'signature': 'dismiss all',
+        'signature': '/dismiss all',
         'description': 'inbox-zero everything except actionable mails (design approvals + Reports)',
     },
     {
         'name': 'status',
-        'signature': 'status',
+        'signature': '/status',
         'description': 'work in flight, by type (Projects / Reports / Designs / Bugs / Tasks). Project children flow into their natural type bucket; approved Reports are hidden once they have been scheduled into a Project.',
     },
     {
         'name': 'inbox',
-        'signature': 'inbox',
+        'signature': '/inbox',
         'description': 'pending mail, approvals, and Reports awaiting your reply',
     },
     {
         'name': 'agents',
-        'signature': 'agents',
+        'signature': '/agents',
         'description': 'list crew agents and health',
     },
     {
         'name': 'nudge',
-        'signature': 'nudge <agent> [reason]',
+        'signature': '/nudge <agent> [reason]',
         'description': 'wake a stalled agent',
     },
     {
         'name': 'restart',
-        'signature': 'restart',
+        'signature': '/restart',
         'description': 'git pull + restart bridget (after merging a PR)',
     },
     {
         'name': 'quiet',
-        'signature': 'quiet <true|false> [HH:MM HH:MM]',
+        'signature': '/quiet <true|false> [HH:MM HH:MM]',
         'description': 'toggle agent quiet hours (default 23:00–06:00)',
     },
     {
         'name': 'preapprove',
-        'signature': 'preapprove [true [fast] | false]',
+        'signature': '/preapprove [true [fast] | false]',
         'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
     },
     {
         'name': 'librarian sync',
-        'signature': 'librarian sync <space> [page-id]',
+        'signature': '/librarian sync <space> [page-id]',
         'description': (
             'trigger a Confluence ingest via the librarian wrapper. '
             'background fire-and-forget — bridget replies immediately '
@@ -301,7 +301,7 @@ COMMANDS = [
     },
     {
         'name': 'librarian search',
-        'signature': 'librarian search <query>',
+        'signature': '/librarian search <query>',
         'description': (
             'grep ingested Confluence content via ripgrep. shells out '
             'to `rg --type=md --max-count=2 --max-columns=200 '
@@ -318,12 +318,12 @@ COMMANDS = [
     },
     {
         'name': 'spend',
-        'signature': 'spend',
+        'signature': '/spend',
         'description': 'show live Anthropic token quota consumption. Probes the Anthropic API to read rate-limit headers (input + output token windows) and reports % used + when each window resets. Requires `ANTHROPIC_API_KEY` in `~/.pogo/bridget.env`. Costs ~1 token per probe. For historical spend, use Claude Code `/cost` or `mg spend`. Note: the API surfaces its own rate-limit windows (typically per-minute) — Claude Code subscription quotas (5-hour session, weekly) are not exposed via the API.',
     },
     {
         'name': 'accountant run-now',
-        'signature': 'accountant run-now [<week>]',
+        'signature': '/accountant run-now [<week>]',
         'description': (
             'trigger an out-of-cadence auto-budget cycle via the '
             'accountant wrapper. background fire-and-forget — bridget '
@@ -341,7 +341,7 @@ COMMANDS = [
     },
     {
         'name': 'accountant status',
-        'signature': 'accountant status',
+        'signature': '/accountant status',
         'description': (
             'last auto-budget cycle timestamp + log tail. reads '
             '`~/.pogo/auto-budget.log` (stdout) and '
@@ -354,7 +354,7 @@ COMMANDS = [
     },
     {
         'name': 'help',
-        'signature': 'help [<command>]',
+        'signature': '/help [<command>]',
         'description': '... this menu, or full details for one command',
     },
 ]
@@ -371,6 +371,49 @@ COMMAND_LIST = '\n'.join(
     f"• `{c['signature']}` — {c['description']}" for c in VISIBLE_COMMANDS
 )
 COMMANDS_BY_NAME = {c['name']: c for c in COMMANDS}
+
+# Slash-command parser (mg-a0f3 — Robin port item 2). Robin (DO bridget) uses
+# Discord's native slash commands; bridget on iMessage/DM has to emulate the
+# same UX in text-command form. All commands now expect a leading `/`; any
+# non-slash text routes to the chat-relay placeholder until items 1/5/6
+# wire the actual chat flow.
+#
+# Back-compat: un-prefixed commands still execute for one release, with a
+# stderr deprecation warning per invocation. Drop the back-compat once
+# chat-relay lands (item 5 — `/route`).
+COMMAND_VERBS = frozenset({
+    'approve', 'reject', 'revise', 'explain', 'kickoff',
+    'read', 'open', 'mail', 'dismiss',
+    'agents', 'agent', 'crew',
+    'nudge', 'restart', 'help', '?', 'commands',
+    'quiet', 'preapprove', 'spend',
+    'librarian', 'accountant',
+    'inbox', 'status',
+})
+# `idea:` and `bug:` carry the colon as part of the verb (no whitespace
+# between verb and payload is required), so they need prefix matching
+# rather than first-token equality.
+COMMAND_VERB_PREFIXES = ('idea:', 'bug:')
+CHAT_RELAY_PLACEHOLDER = (
+    'chat-relay not yet wired — DM a recognized `/`-prefixed command, or '
+    'send `/help` to see what bridget understands.'
+)
+
+
+def _is_known_verb(text: str) -> bool:
+    """Detect un-prefixed legacy command vs freeform chat (mg-a0f3).
+
+    Returns True iff the first whitespace-separated token of `text` is a
+    recognized command verb, or `text` begins with one of the colon-suffixed
+    verbs (`idea:` / `bug:`). The slash-prefixed form skips this check.
+    """
+    low = text.strip().lower()
+    if not low:
+        return False
+    if any(low.startswith(p) for p in COMMAND_VERB_PREFIXES):
+        return True
+    first = low.split(None, 1)[0]
+    return first in COMMAND_VERBS
 
 
 def die(msg: str, code: int = 1) -> None:
@@ -1049,7 +1092,7 @@ async def watch_mailbox(user: discord.User):
                 summary = summary[:STATUS_OUTPUT_BUDGET] + '\n…(truncated)'
             await user.send(
                 f"🔔 bridget online.\n\n{summary}\n\n"
-                f"Send `help` for a list of commands."
+                f"Send `/help` for a list of commands."
             )
         except discord.HTTPException as e:
             _log(f'HTTPException in startup DM (with status): {e}')
@@ -1903,6 +1946,36 @@ def _format_librarian_search_results(rg_stdout: str, root: Path) -> str:
 
 
 def handle_command(text: str) -> str | list[str]:
+    """Top-level DM dispatcher (mg-a0f3 slash-command parser).
+
+    Three routes:
+    1. `/<verb> …`  → strip slash and dispatch (canonical form).
+    2. `<known verb> …` (no slash) → log deprecation, then dispatch. Kept
+       for one release so existing reflexes don't break overnight; drops
+       once chat-relay (item 5) makes the distinction non-negotiable.
+    3. anything else → chat-relay placeholder. Item 1 of the Robin port
+       wires this to the real chat flow.
+    """
+    text = text.strip()
+    if text.startswith('/'):
+        return _dispatch_command(text[1:].lstrip())
+    if _is_known_verb(text):
+        first = text.split(None, 1)[0] if text.split() else ''
+        _log(
+            f'deprecated: bridget command `{first}` sent without leading "/" '
+            f'prefix; use `/{first}` instead (back-compat drops with chat-relay)'
+        )
+        return _dispatch_command(text)
+    return CHAT_RELAY_PLACEHOLDER
+
+
+def _dispatch_command(text: str) -> str | list[str]:
+    """Per-verb dispatcher (extracted from handle_command in mg-a0f3).
+
+    Callers must have already stripped any leading slash and decided that
+    the text is in fact a command (vs chat-relay). This function still
+    enforces the BRIDGET_PROFILE gate and per-verb usage checks.
+    """
     text = text.strip()
     low = text.lower()
 
@@ -1935,7 +2008,7 @@ def handle_command(text: str) -> str | list[str]:
     if re.match(r'^reject [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 2:
-            return "Usage: `reject mg-XXXX <reason>` (or `dr-XXXX`)"
+            return "Usage: `/reject mg-XXXX <reason>` (or `dr-XXXX`)"
         mg_id = parts[1]
         reason = parts[2] if len(parts) > 2 else 'rejected via discord'
         target = route_recipient(mg_id)
@@ -1955,7 +2028,7 @@ def handle_command(text: str) -> str | list[str]:
     if low == 'kickoff' or low.startswith('kickoff '):
         parts = text.split(None, 1)
         if len(parts) < 2:
-            return 'Usage: `kickoff pj-XXXX`'
+            return 'Usage: `/kickoff pj-XXXX`'
         pj_id = parts[1].strip().lower()
         if not re.match(r'^pj-[0-9a-f]+$', pj_id):
             return 'kickoff is restricted to pj- prefix (projects only)'
@@ -1973,7 +2046,7 @@ def handle_command(text: str) -> str | list[str]:
     if re.match(r'^revise [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 3:
-            return "Usage: `revise mg-XXXX <feedback>` (or `dr-XXXX`)"
+            return "Usage: `/revise mg-XXXX <feedback>` (or `dr-XXXX`)"
         mg_id = parts[1]
         feedback = parts[2]
         sh_rc, sh_out, _ = run_mg(['show', mg_id])
@@ -2000,7 +2073,7 @@ def handle_command(text: str) -> str | list[str]:
         if n < 1 or n > len(unread):
             return (
                 f"m{n} not found — inbox has {len(unread)} unread mail"
-                f"{'s' if len(unread) != 1 else ''}. Run `inbox` to refresh."
+                f"{'s' if len(unread) != 1 else ''}. Run `/inbox` to refresh."
             )
         p = unread[n - 1]
         try:
@@ -2030,7 +2103,7 @@ def handle_command(text: str) -> str | list[str]:
 
     if low == 'open' or low.startswith('open '):
         parts = text.split(None, 1)
-        usage = "Usage: `open mg-XXXX`"
+        usage = "Usage: `/open mg-XXXX`"
         if len(parts) < 2:
             return usage
         arg = parts[1].strip().lower()
@@ -2048,13 +2121,13 @@ def handle_command(text: str) -> str | list[str]:
     if re.match(r'^read [a-z]+-', low):
         parts = text.split(None, 1)
         if len(parts) < 2:
-            return "Usage: `read mg-XXXX` (or `dr-XXXX`)"
+            return "Usage: `/read mg-XXXX` (or `dr-XXXX`)"
         mg_id = parts[1].strip()
 
         if DESIGN_ID_RE.match(mg_id.lower()):
             return (
-                "`read` is for mail message-ids; "
-                "try `open mg-XXXX` for designs."
+                "`/read` is for mail message-ids; "
+                "try `/open mg-XXXX` for designs."
             )
 
         matches = find_mails_for(mg_id)
@@ -2101,7 +2174,7 @@ def handle_command(text: str) -> str | list[str]:
     if low.startswith('dismiss '):
         parts = text.split(None, 1)
         if len(parts) < 2:
-            return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"
+            return "Usage: `/dismiss mg-XXXX` (or `dr-XXXX`) or `/dismiss all`"
         arg = parts[1].strip()
         if arg.lower() == 'all':
             n = mark_mail_read(all_unread=True, protect_actionable=True)
@@ -2111,12 +2184,12 @@ def handle_command(text: str) -> str | list[str]:
             n = mark_mail_read(mg_id=arg, protect_actionable=True)
             log_mail_action('dismiss', mg_id=arg)
             return f"✓ marked {n} mail{'s' if n != 1 else ''} read for `{arg}`"
-        return "Usage: `dismiss mg-XXXX` (or `dr-XXXX`) or `dismiss all`"
+        return "Usage: `/dismiss mg-XXXX` (or `dr-XXXX`) or `/dismiss all`"
 
     if re.match(r'^explain [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 3:
-            return "Usage: `explain mg-XXXX <what to explain>` (or `dr-XXXX`)"
+            return "Usage: `/explain mg-XXXX <what to explain>` (or `dr-XXXX`)"
         mg_id = parts[1]
         topic = parts[2]
         target = route_recipient(mg_id)
@@ -2181,7 +2254,7 @@ def handle_command(text: str) -> str | list[str]:
     if low.startswith('nudge '):
         parts = text.split(None, 2)
         if len(parts) < 2:
-            return 'Usage: nudge <agent-name> [reason]'
+            return 'Usage: /nudge <agent-name> [reason]'
         agent_name = parts[1]
         reason = parts[2] if len(parts) > 2 else 'status check'
         rc, out, err = run_pogo(['nudge', '--immediate', agent_name, reason])
@@ -2234,7 +2307,7 @@ def handle_command(text: str) -> str | list[str]:
             subject = rest.strip()
             body = '(no body)'
         if not subject:
-            return 'Usage: mail <subject>\n[optional body, multi-line OK]'
+            return 'Usage: /mail <subject>\n[optional body, multi-line OK]'
         recipient = CONFIG['mail_recipient']
         rc, out, err = run_mg([
             'mail', 'send', recipient,
@@ -2251,7 +2324,7 @@ def handle_command(text: str) -> str | list[str]:
         for c in VISIBLE_COMMANDS:
             lines.append(f"• `{c['signature']}`")
         lines.append('')
-        lines.append('Type `help <command>` for details on any one.')
+        lines.append('Type `/help <command>` for details on any one.')
         return '\n'.join(lines)
     if low.startswith('help '):
         name = text.split(None, 1)[1].strip().lower()
@@ -2259,13 +2332,13 @@ def handle_command(text: str) -> str | list[str]:
             return _robin_only_reply(name)
         c = COMMANDS_BY_NAME.get(name)
         if not c:
-            return f"Unknown command `{name}`; type `help` for the menu."
+            return f"Unknown command `{name}`; type `/help` for the menu."
         return f"**`{c['signature']}`**\n\n{c['description']}"
 
     if low.startswith('idea:'):
         body = text[5:].strip()
         if not body:
-            return "Usage: `idea: [optional-tag] [optional-tag] ... <description>`"
+            return "Usage: `/idea: [optional-tag] [optional-tag] ... <description>`"
         extra_tags = []
         while True:
             m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
@@ -2274,7 +2347,7 @@ def handle_command(text: str) -> str | list[str]:
             extra_tags.append(m.group(1).strip())
             body = m.group(2).strip()
         if not body:
-            return "Usage: `idea: [optional-tag] [optional-tag] ... <description>`"
+            return "Usage: `/idea: [optional-tag] [optional-tag] ... <description>`"
         title = body.splitlines()[0][:60]
         args = [
             'new', '--type=idea',
@@ -2292,7 +2365,7 @@ def handle_command(text: str) -> str | list[str]:
     if low.startswith('bug:'):
         body = text[4:].strip()
         if not body:
-            return "Usage: `bug: [optional-tag] [optional-tag] ... <description>`"
+            return "Usage: `/bug: [optional-tag] [optional-tag] ... <description>`"
         extra_tags = []
         while True:
             m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
@@ -2301,7 +2374,7 @@ def handle_command(text: str) -> str | list[str]:
             extra_tags.append(m.group(1).strip())
             body = m.group(2).strip()
         if not body:
-            return "Usage: `bug: [optional-tag] [optional-tag] ... <description>`"
+            return "Usage: `/bug: [optional-tag] [optional-tag] ... <description>`"
         is_critical = any(t.lower() == 'critical' for t in extra_tags)
         assignee = 'mayor' if is_critical else 'architect'
         title = body.splitlines()[0][:60]
@@ -2330,15 +2403,15 @@ def handle_command(text: str) -> str | list[str]:
                 return f"🌙 quiet hours: enabled, {state['start']}–{state['end']} (local)."
             return f"quiet hours: disabled. (window {state['start']}–{state['end']})"
         if len(rest) == 2 and TIME_RE.match(rest[0]) and TIME_RE.match(rest[1]):
-            return "Usage: `quiet <true|false> [HH:MM HH:MM]`"
+            return "Usage: `/quiet <true|false> [HH:MM HH:MM]`"
         flag = rest[0].lower()
         if flag not in ('true', 'false'):
-            return "Usage: `quiet <true|false> [HH:MM HH:MM]`"
+            return "Usage: `/quiet <true|false> [HH:MM HH:MM]`"
         state = load_quiet()
         times = rest[1:]
         if times:
             if len(times) != 2 or not TIME_RE.match(times[0]) or not TIME_RE.match(times[1]):
-                return "Usage: `quiet <true|false> [HH:MM HH:MM]` (times must match HH:MM)"
+                return "Usage: `/quiet <true|false> [HH:MM HH:MM]` (times must match HH:MM)"
             state['start'] = times[0]
             state['end'] = times[1]
         if flag == 'true':
@@ -2360,7 +2433,7 @@ def handle_command(text: str) -> str | list[str]:
                 return (f"pre-approval: currently enabled (fast: {fast_word}). "
                         f"send 'preapprove false' to disable, or '{toggle_cmd}' to switch fast {toggle_target}.")
             return "pre-approval: currently disabled. send 'preapprove true' to enable, or 'preapprove true fast' for fast mode."
-        usage = "Usage: `preapprove [true [fast] | false]`"
+        usage = "Usage: `/preapprove [true [fast] | false]`"
         if rest[0] not in ('true', 'false'):
             return usage
         if rest[0] == 'true':
@@ -2397,7 +2470,7 @@ def handle_command(text: str) -> str | list[str]:
     if low == 'librarian sync' or low.startswith('librarian sync '):
         parts = text.split()
         if len(parts) < 3 or len(parts) > 4:
-            return "Usage: `librarian sync <space> [page-id]`"
+            return "Usage: `/librarian sync <space> [page-id]`"
         space = parts[2]
         page_id = parts[3] if len(parts) == 4 else None
         if not LIBRARIAN_SPACE_RE.match(space):
@@ -2462,7 +2535,7 @@ def handle_command(text: str) -> str | list[str]:
     if low == 'librarian search' or low.startswith('librarian search '):
         query = text[len('librarian search'):].lstrip()
         if not query:
-            return "Usage: `librarian search <query>`"
+            return "Usage: `/librarian search <query>`"
         root = _librarian_search_root()
         if not root.exists():
             return f"no Confluence data ingested yet at `{root}`"
@@ -2502,7 +2575,7 @@ def handle_command(text: str) -> str | list[str]:
         parts = text.split(None, 2)
         week = parts[2].strip() if len(parts) > 2 else ''
         if week and not ACCOUNTANT_WEEK_RE.match(week):
-            return "Usage: `accountant run-now [YYYY-Www]`"
+            return "Usage: `/accountant run-now [YYYY-Www]`"
         if os.path.exists(ACCOUNTANT_LOCK_PATH):
             return (
                 f"✗ budget cycle already running "
@@ -2577,7 +2650,7 @@ def handle_command(text: str) -> str | list[str]:
         return summary
 
     return (
-        "Unrecognized. Send `help` for the full command list."
+        "Unrecognized. Send `/help` for the full command list."
     )
 
 

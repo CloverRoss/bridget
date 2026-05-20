@@ -223,7 +223,8 @@ def test_probe_returns_none_without_api_key(bridget, monkeypatch):
 
 def test_help_menu_lists_spend(bridget):
     reply = bridget.handle_command('help')
-    assert '`spend`' in reply
+    # Slash-prefixed signature (mg-a0f3).
+    assert '`/spend`' in reply
 
 
 def test_help_spend_describes_command(bridget):
@@ -235,7 +236,7 @@ def test_help_spend_describes_command(bridget):
 
 
 def test_command_list_includes_spend(bridget):
-    assert '`spend`' in bridget.COMMAND_LIST
+    assert '`/spend`' in bridget.COMMAND_LIST
 
 
 if __name__ == '__main__':

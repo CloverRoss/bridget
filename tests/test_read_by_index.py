@@ -137,7 +137,7 @@ def test_read_m4_out_of_range_friendly_error(bridget):
     assert isinstance(reply, str)
     assert 'm4 not found' in reply
     assert 'inbox has 3 unread mails' in reply
-    assert '`inbox`' in reply
+    assert '`/inbox`' in reply
 
 
 def test_read_m1_empty_mail_dir_friendly_error(bridget):

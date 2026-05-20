@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Command parser now requires a leading `/` prefix on every command
+  (Robin-style slash commands; Robin port item 2). Non-slash DMs are
+  reserved for the chat-relay path (wired in a follow-up item); they
+  currently reply with a `chat-relay not yet wired` placeholder so the
+  user knows what happened. Un-prefixed commands still execute for one
+  release with a stderr deprecation warning (`deprecated: bridget
+  command \`<verb>\` sent without leading "/" prefix`) so muscle memory
+  doesn't break overnight; back-compat drops with the chat-relay
+  cutover. Help menu, COMMAND_LIST startup DM, and README are updated
+  to show the `/` form. (mg-a0f3)
+
 ### Added
 
 - `agents` view now surfaces per-agent ticket-in-progress duration and an

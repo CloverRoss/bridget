@@ -174,12 +174,12 @@ def test_commands_includes_kickoff(bridget):
 
 def test_help_menu_lists_kickoff_signature(bridget):
     reply = bridget.handle_command('help')
-    assert 'kickoff pj-XXXX' in reply
+    assert '/kickoff pj-XXXX' in reply
 
 
 def test_help_kickoff_drill_down(bridget):
     reply = bridget.handle_command('help kickoff')
-    assert '`kickoff pj-XXXX`' in reply
+    assert '`/kickoff pj-XXXX`' in reply
     # The longer description should mention the pj- restriction and the
     # ready-for-kickoff → in-progress flow per ds-1482.
     assert 'pj-' in reply

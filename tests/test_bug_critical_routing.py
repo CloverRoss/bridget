@@ -114,10 +114,10 @@ def test_bug_critical_with_unrelated_tag_only_routes_to_architect(bridget, monke
 
 
 def test_command_list_notes_critical_routing(bridget):
-    # COMMAND_LIST entry for bug: should explain the [critical] fast-path.
+    # COMMAND_LIST entry for /bug: should explain the [critical] fast-path.
     cl = bridget.COMMAND_LIST
-    bug_lines = [ln for ln in cl.splitlines() if '`bug:' in ln]
-    assert bug_lines, 'no bug: entry in COMMAND_LIST'
+    bug_lines = [ln for ln in cl.splitlines() if '`/bug:' in ln]
+    assert bug_lines, 'no /bug: entry in COMMAND_LIST'
     bug_line = bug_lines[0]
     assert '[critical]' in bug_line
     assert 'mayor' in bug_line

@@ -68,7 +68,7 @@ def test_help_menu_lists_every_signature(bridget):
 
 def test_help_menu_has_drill_down_footer(bridget):
     reply = bridget.handle_command('help')
-    assert 'Type `help <command>` for details on any one.' in reply
+    assert 'Type `/help <command>` for details on any one.' in reply
 
 
 def test_help_menu_fits_discord_budget(bridget):
@@ -81,7 +81,7 @@ def test_help_aliases_render_compact_menu(bridget, alias):
     reply = bridget.handle_command(alias)
     assert isinstance(reply, str)
     assert reply.startswith('**Commands:**')
-    assert 'Type `help <command>` for details on any one.' in reply
+    assert 'Type `/help <command>` for details on any one.' in reply
 
 
 # -- help <command> drill-down ---------------------------------------------
@@ -89,8 +89,8 @@ def test_help_aliases_render_compact_menu(bridget, alias):
 def test_help_command_returns_full_description(bridget):
     reply = bridget.handle_command('help approve')
     assert 'approve a design (auto-clears related mails)' in reply
-    # Signature is included as the title.
-    assert 'approve mg-XXXX (or dr-XXXX)' in reply
+    # Signature is included as the title (with the /-prefix from mg-a0f3).
+    assert '/approve mg-XXXX (or dr-XXXX)' in reply
 
 
 def test_help_status_preserves_legacy_description(bridget):
@@ -115,7 +115,7 @@ def test_help_command_is_case_insensitive(bridget):
 
 def test_help_for_help_itself(bridget):
     reply = bridget.handle_command('help help')
-    assert 'help [<command>]' in reply
+    assert '/help [<command>]' in reply
 
 
 # -- COMMAND_LIST derived constant -----------------------------------------
@@ -141,7 +141,8 @@ def test_command_list_preserves_status_description_verbatim(bridget):
 def test_commands_by_name_lookup(bridget):
     by_name = bridget.COMMANDS_BY_NAME
     assert 'approve' in by_name
-    assert by_name['approve']['signature'] == 'approve mg-XXXX (or dr-XXXX)'
+    # Signatures carry the slash prefix post-mg-a0f3.
+    assert by_name['approve']['signature'] == '/approve mg-XXXX (or dr-XXXX)'
     assert 'dismiss' in by_name
     assert 'dismiss all' in by_name
     assert 'help' in by_name

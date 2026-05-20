@@ -95,8 +95,8 @@ def test_help_menu_omits_robin_only_on_laptop(bridget_laptop):
     reply = bridget_laptop.handle_command('help')
     assert 'librarian sync' not in reply
     assert 'librarian search' not in reply
-    # Note: `spend` is a short word; check the signature form explicitly.
-    assert '`spend`' not in reply
+    # Note: `spend` is a short word; check the slash signature explicitly.
+    assert '`/spend`' not in reply
 
 
 def test_help_menu_keeps_non_gated_on_laptop(bridget_laptop):
@@ -111,23 +111,24 @@ def test_help_menu_includes_robin_only_on_robin(bridget_robin):
     reply = bridget_robin.handle_command('help')
     assert 'librarian sync' in reply
     assert 'librarian search' in reply
-    assert '`spend`' in reply
+    # Slash-prefixed signature (mg-a0f3).
+    assert '`/spend`' in reply
 
 
 def test_command_list_omits_robin_only_on_laptop(bridget_laptop):
     # COMMAND_LIST powers the startup DM at watch_mailbox; it must follow
     # the same gating as the help menu.
     cl = bridget_laptop.COMMAND_LIST
-    assert '`librarian sync' not in cl
-    assert '`librarian search' not in cl
-    assert '`spend`' not in cl
+    assert '`/librarian sync' not in cl
+    assert '`/librarian search' not in cl
+    assert '`/spend`' not in cl
 
 
 def test_command_list_includes_robin_only_on_robin(bridget_robin):
     cl = bridget_robin.COMMAND_LIST
-    assert '`librarian sync' in cl
-    assert '`librarian search' in cl
-    assert '`spend`' in cl
+    assert '`/librarian sync' in cl
+    assert '`/librarian search' in cl
+    assert '`/spend`' in cl
 
 
 def test_visible_commands_filtered_on_laptop(bridget_laptop):

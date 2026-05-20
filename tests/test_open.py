@@ -150,12 +150,12 @@ def test_help_open_describes_notes_pointer(bridget):
 
 def test_help_menu_lists_open(bridget):
     reply = bridget.handle_command('help')
-    assert 'open mg-XXXX' in reply
+    assert '/open mg-XXXX' in reply
 
 
 def test_command_list_includes_open(bridget):
     cl = bridget.COMMAND_LIST
-    assert '`open mg-XXXX`' in cl
+    assert '`/open mg-XXXX`' in cl
 
 
 if __name__ == '__main__':

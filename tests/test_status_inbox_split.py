@@ -326,8 +326,8 @@ def test_handle_command_status_returns_status_summary(bridget, monkeypatch):
 
 def test_command_list_lists_both_status_and_inbox(bridget):
     cl = bridget.COMMAND_LIST
-    assert '`status`' in cl
-    assert '`inbox`' in cl
+    assert '`/status`' in cl
+    assert '`/inbox`' in cl
     # New status description mentions the categorized layout.
     assert 'Reports' in cl
     assert 'Designs' in cl
