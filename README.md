@@ -25,6 +25,15 @@ nohup, or whatever supervisor you like.
   In Discord, enable Developer Mode (Settings → Advanced → Developer Mode),
   then right-click your name / the server icon → "Copy ID".
 
+  **OAuth scopes for native slash commands (mg-db57):** when generating
+  the bot's invite URL in the developer portal, enable both `bot` AND
+  `applications.commands` under OAuth2 → URL Generator. Without
+  `applications.commands` the bot can sign in but Discord refuses to
+  surface its slash commands in the DM UI, so users can only reach
+  bridget through the text-parser path (still works — every slash verb
+  has a back-compat text form). Re-invite the bot with the wider scope
+  if you originally invited it `bot`-only.
+
 ## Roadmap & known bugs
 
 Current planned work and known bugs are mirrored below from [ROADMAP.md](ROADMAP.md) and [KNOWN_BUGS.md](KNOWN_BUGS.md). Both files are the canonical source — update them (and this README section) in the same PR if you change roadmap or bug state. See [CONTRIBUTING.md](CONTRIBUTING.md).
@@ -122,12 +131,25 @@ director-side configuration only).
 
 ## Commands (DM the bot)
 
-All commands are prefixed with `/` (Robin port item 2, mg-a0f3). Non-slash
-DMs flow to the **chat-relay** (mg-c869): they're buffered for the crew
-agent set by `/route` and the recipient gets a `pogo nudge … "N new
-bridget messages"`. See [Chat-relay](#chat-relay-user--agent-dms) below.
-Un-prefixed legacy commands still execute for one release with a stderr
-deprecation warning, but the back-compat path drops in a follow-up.
+All commands are prefixed with `/` (Robin port item 2, mg-a0f3). Both
+Discord's native slash UI (mg-db57) and the text-parser path resolve to
+the same dispatcher — type `/approve mg-abcd` and Discord's autocomplete
+will surface the command, but the literal text `/approve mg-abcd` still
+works as a DM if you prefer typing. Two text-form verbs are renamed in
+the native slash surface because Discord names cannot contain `:` or
+spaces: `/idea: …` → `/idea …`, `/bug: …` → `/bug …`, and the
+two-word `librarian` / `accountant` verbs are exposed as
+`/librarian-sync`, `/librarian-search`, `/accountant-run-now`, and
+`/accountant-status`. The native form requires `applications.commands`
+in the bot's OAuth scopes (see [Prerequisites](#prerequisites)); the
+text-form path stays available regardless.
+
+Non-slash DMs flow to the **chat-relay** (mg-c869): they're buffered
+for the crew agent set by `/route` and the recipient gets a `pogo
+nudge … "N new bridget messages"`. See
+[Chat-relay](#chat-relay-user--agent-dms) below. Un-prefixed legacy
+commands still execute for one release with a stderr deprecation
+warning, but the back-compat path drops in a follow-up.
 
 - `/approve mg-XXXX` (or `dr-XXXX`) — approve a design (auto-clears related mails).
 - `/reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails.

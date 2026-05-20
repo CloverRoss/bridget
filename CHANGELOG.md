@@ -9,6 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Native Discord slash-command registration. bridget now registers a
+  `discord.app_commands.CommandTree` and exposes each text-parser verb
+  (`/approve`, `/status`, `/inbox`, …) as a native slash command;
+  `tree.sync()` runs once on `on_ready` first-fire (gated by
+  `_slash_synced` so reconnects don't burn the global-registration rate
+  limit). Each wrapper reconstructs the text form (e.g. `/approve` +
+  `target=mg-abcd` → `approve mg-abcd`) and forwards into
+  `handle_command`, so the existing text-parser stays the single source
+  of truth for verb logic. Discord-safe name remappings: `/idea:` →
+  `/idea`, `/bug:` → `/bug` (the wrapper re-inserts the colon when
+  forwarding); two-word verbs are exposed as `/librarian-sync`,
+  `/librarian-search`, `/accountant-run-now`, `/accountant-status`.
+  USER_ID gate: a non-configured invoker gets an ephemeral
+  "not your bridget" reply and `handle_command` is never reached, so
+  someone else triggering a slash in a shared guild can't run mg/pogo
+  work as the configured user. Sync failures log and continue —
+  watchers still spawn so a flaky Discord-commands API doesn't take
+  down the bridge. Requires `applications.commands` in the bot's OAuth
+  scopes; if missing, native slash UI is hidden but the text-form path
+  keeps working (every native verb has the same text-form spelling).
+  (mg-db57, Robin port item 3)
+
 - Chat-relay: non-slash DMs now buffer for the crew agent set by
   `/route` and trigger a `pogo nudge <agent> "N new bridget messages"`
   (where N is the per-recipient pending count). Buffer lives at

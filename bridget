@@ -35,6 +35,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
+from typing import Optional
 
 
 def _log(msg: str) -> None:
@@ -773,6 +774,14 @@ intents.message_content = True
 intents.dm_messages = True
 
 client = discord.Client(intents=intents)
+# Native Discord slash-command tree (mg-db57 — Robin port). Wrappers below
+# forward each invocation into handle_command so the text-parser path
+# (mg-a0f3) stays the single source of truth for verb logic; tree.sync()
+# in on_ready uploads the registration to Discord on first connect.
+tree = discord.app_commands.CommandTree(client)
+# Guard so tree.sync() only fires once across gateway reconnects (Discord
+# rate-limits global registrations).
+_slash_synced = False
 
 
 def parse_mail(content: str) -> dict:
@@ -3203,9 +3212,218 @@ def _dispatch_command(text: str) -> str | list[str]:
     )
 
 
+# --- Native Discord slash commands (mg-db57) ----------------------------
+#
+# Bridget already parses /-prefixed text DMs (mg-a0f3); these wrappers
+# expose the same verbs through Discord's native slash UI without
+# duplicating handler logic. Each wrapper reconstructs the text-command
+# equivalent and forwards into handle_command, which returns the same
+# str|list[str] reply as the text path. tree.sync() in on_ready uploads
+# the registration to Discord on first connect (mg-db57).
+#
+# Discord name constraints: lowercase, no colons or spaces. So:
+# - `idea:` / `bug:` (colon is part of the text verb) become `/idea`
+#   and `/bug`; the wrapper re-inserts the colon when forwarding.
+# - Two-word verbs (`librarian sync`, `accountant run-now`, etc.) use
+#   hyphenated Discord names matching Robin's `mail-director` convention
+#   rather than subcommand groups, since the text parser already keys
+#   off space-separated tokens.
+#
+# USER_ID gate: bridget is single-user, so unknown invokers see an
+# ephemeral 'not your bridget' message instead of running mg/pogo
+# work under the configured user's identity.
+
+async def _run_slash(interaction, text: str) -> None:
+    """Forward a slash invocation into handle_command + reply back.
+
+    Many handlers shell out (run_mg / run_pogo / subprocess.Popen) which
+    can blow Discord's 3 s interaction-token window, so we defer() up
+    front and emit reply chunks via followup.send() — same shape Robin
+    uses for its slash commands."""
+    if interaction.user.id != USER_ID:
+        await interaction.response.send_message(
+            "this bridget only responds to its configured user.",
+            ephemeral=True,
+        )
+        return
+    await interaction.response.defer()
+    try:
+        reply = handle_command(text)
+    except Exception as e:  # noqa: BLE001
+        _log(f'slash dispatch raised on {text!r}: {e}')
+        await interaction.followup.send(f'✗ internal error: {e}')
+        return
+    chunks = reply if isinstance(reply, list) else [reply]
+    chunks = [c for c in chunks if c and c.strip()]
+    if not chunks:
+        await interaction.followup.send('(empty reply)')
+        return
+    for chunk in chunks:
+        for piece in _split_for_dm(chunk):
+            await interaction.followup.send(piece)
+
+
+def _register_slash_commands(tree) -> None:
+    """Register native slash commands that forward into handle_command.
+
+    Called once at module load (after handle_command is defined); the
+    tree is uploaded to Discord by tree.sync() in on_ready."""
+
+    @tree.command(name='approve', description='Approve a design')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd')
+    async def cmd_approve(interaction, target: str):
+        await _run_slash(interaction, f'approve {target}')
+
+    @tree.command(name='reject', description='Reject a design with a reason')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', reason='Reason for rejection')
+    async def cmd_reject(interaction, target: str, reason: str):
+        await _run_slash(interaction, f'reject {target} {reason}')
+
+    @tree.command(name='revise', description='Request changes to a design')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', feedback='What to revise')
+    async def cmd_revise(interaction, target: str, feedback: str):
+        await _run_slash(interaction, f'revise {target} {feedback}')
+
+    @tree.command(name='explain', description='Ask architect to elaborate without redesigning')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', what='What to explain')
+    async def cmd_explain(interaction, target: str, what: str):
+        await _run_slash(interaction, f'explain {target} {what}')
+
+    @tree.command(name='kickoff', description='Flip a Project from ready-for-kickoff to in-progress')
+    @discord.app_commands.describe(project='Project id, e.g. pj-abcd')
+    async def cmd_kickoff(interaction, project: str):
+        await _run_slash(interaction, f'kickoff {project}')
+
+    @tree.command(name='read', description='Read a mail by slot (e.g. m1) from latest /inbox')
+    @discord.app_commands.describe(slot='Mail slot, e.g. m1')
+    async def cmd_read(interaction, slot: str):
+        await _run_slash(interaction, f'read {slot}')
+
+    @tree.command(name='open', description='Open a design in Notes (returns the Notes-app pointer)')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd')
+    async def cmd_open(interaction, target: str):
+        await _run_slash(interaction, f'open {target}')
+
+    @tree.command(name='idea', description='File an idea (optionally with [tags])')
+    @discord.app_commands.describe(text='Idea body (prefix `[tag] [tag] …` for scope tags)')
+    async def cmd_idea(interaction, text: str):
+        await _run_slash(interaction, f'idea: {text}')
+
+    @tree.command(name='bug', description='File a bug (optionally with [tags]; use [critical] for crash-class)')
+    @discord.app_commands.describe(text='Bug body (prefix `[tag] [tag] …` for scope tags)')
+    async def cmd_bug(interaction, text: str):
+        await _run_slash(interaction, f'bug: {text}')
+
+    @tree.command(name='mail', description='Send a mail (subject required; body optional)')
+    @discord.app_commands.describe(subject='Subject line', body='Optional body (multi-line OK)')
+    async def cmd_mail(interaction, subject: str, body: Optional[str] = None):
+        text = f'mail {subject}'
+        if body:
+            text = f'mail {subject}\n{body}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='dismiss', description='Mark mails about an id as read (or `all` to inbox-zero)')
+    @discord.app_commands.describe(target='mg-XXXX / dr-XXXX, or the literal `all`')
+    async def cmd_dismiss(interaction, target: str):
+        await _run_slash(interaction, f'dismiss {target}')
+
+    @tree.command(name='status', description='Work in flight, by type')
+    async def cmd_status(interaction):
+        await _run_slash(interaction, 'status')
+
+    @tree.command(name='inbox', description='Pending mail, approvals, and Reports awaiting reply')
+    async def cmd_inbox(interaction):
+        await _run_slash(interaction, 'inbox')
+
+    @tree.command(name='agents', description='List crew agents and health')
+    async def cmd_agents(interaction):
+        await _run_slash(interaction, 'agents')
+
+    @tree.command(name='nudge', description='Wake a stalled agent')
+    @discord.app_commands.describe(agent='Agent name', reason='Optional reason')
+    async def cmd_nudge(interaction, agent: str, reason: Optional[str] = None):
+        text = f'nudge {agent}'
+        if reason:
+            text = f'nudge {agent} {reason}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='restart', description='git pull + restart bridget')
+    async def cmd_restart(interaction):
+        await _run_slash(interaction, 'restart')
+
+    @tree.command(name='quiet', description='Toggle agent quiet hours')
+    @discord.app_commands.describe(
+        flag='true or false (omit to show current)',
+        window='Optional "HH:MM HH:MM" override',
+    )
+    async def cmd_quiet(interaction, flag: Optional[str] = None, window: Optional[str] = None):
+        parts = ['quiet']
+        if flag:
+            parts.append(flag)
+        if window:
+            parts.append(window)
+        await _run_slash(interaction, ' '.join(parts))
+
+    @tree.command(name='preapprove', description='Toggle architect + mayor pre-approval')
+    @discord.app_commands.describe(mode='`true`, `true fast`, or `false`; omit to show current')
+    async def cmd_preapprove(interaction, mode: Optional[str] = None):
+        text = 'preapprove'
+        if mode:
+            text = f'preapprove {mode}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='route', description='Set/show the crew agent that non-slash DMs target')
+    @discord.app_commands.describe(agent='mayor / director / architect / doctor; omit to show current')
+    async def cmd_route(interaction, agent: Optional[str] = None):
+        text = 'route'
+        if agent:
+            text = f'route {agent}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='spend', description='Show live Anthropic token quota consumption')
+    async def cmd_spend(interaction):
+        await _run_slash(interaction, 'spend')
+
+    @tree.command(name='librarian-sync', description='Trigger a Confluence ingest (background)')
+    @discord.app_commands.describe(space='Confluence space key, e.g. ENG', page_id='Optional page id (digits)')
+    async def cmd_librarian_sync(interaction, space: str, page_id: Optional[str] = None):
+        text = f'librarian sync {space}'
+        if page_id:
+            text = f'librarian sync {space} {page_id}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='librarian-search', description='Search ingested Confluence content (ripgrep)')
+    @discord.app_commands.describe(query='Search query')
+    async def cmd_librarian_search(interaction, query: str):
+        await _run_slash(interaction, f'librarian search {query}')
+
+    @tree.command(name='accountant-run-now', description='Trigger an out-of-cadence auto-budget cycle')
+    @discord.app_commands.describe(week='Optional ISO YYYY-Www, e.g. 2026-W18')
+    async def cmd_accountant_run_now(interaction, week: Optional[str] = None):
+        text = 'accountant run-now'
+        if week:
+            text = f'accountant run-now {week}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='accountant-status', description='Last auto-budget cycle timestamp + log tail')
+    async def cmd_accountant_status(interaction):
+        await _run_slash(interaction, 'accountant status')
+
+    @tree.command(name='help', description='List commands or describe one')
+    @discord.app_commands.describe(command='Optional command name for details')
+    async def cmd_help(interaction, command: Optional[str] = None):
+        text = 'help'
+        if command:
+            text = f'help {command}'
+        await _run_slash(interaction, text)
+
+
+_register_slash_commands(tree)
+
+
 @client.event
 async def on_ready():
-    global _watchers_started
+    global _watchers_started, _slash_synced
     _log(f'on_ready fired (pid={os.getpid()}, _watchers_started={_watchers_started})')
     print(f"logged in as {client.user} (id={client.user.id})", flush=True)
     if _watchers_started:
@@ -3217,6 +3435,18 @@ async def on_ready():
         print(f"user {USER_ID} not found", file=sys.stderr)
         await client.close()
         return
+    # Sync slash-command registration with Discord on first connect (mg-db57).
+    # Best-effort: a sync failure logs + continues so an unreachable Discord
+    # commands API doesn't block the watcher spawn below. Guarded by
+    # `_slash_synced` so reconnects don't burn the global-registration
+    # rate limit re-uploading the same tree.
+    if not _slash_synced:
+        try:
+            synced = await tree.sync()
+            _log(f'synced {len(synced)} slash command(s)')
+            _slash_synced = True
+        except Exception as exc:  # noqa: BLE001
+            _log(f'slash-command sync failed: {exc}')
     client.loop.create_task(watch_mailbox(user))
     client.loop.create_task(watch_task_transitions(user))
     client.loop.create_task(watch_idea_claims(user))
