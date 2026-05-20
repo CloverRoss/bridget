@@ -1079,9 +1079,10 @@ async def watch_mailbox(user: discord.User):
             seen.add(p.name)
         save_seen(seen)
         try:
-            await user.send(
+            await send_dm_chunked(
+                user,
                 "🔔 bridget online. I'll DM you when new mail arrives in "
-                "`human/new/`. Recognized replies:\n" + COMMAND_LIST
+                "`human/new/`. Recognized replies:\n" + COMMAND_LIST,
             )
         except discord.HTTPException as e:
             _log(f'HTTPException in startup DM (fresh seen): {e}')
@@ -1090,9 +1091,10 @@ async def watch_mailbox(user: discord.User):
             summary = get_status_summary()
             if len(summary) > STATUS_OUTPUT_BUDGET:
                 summary = summary[:STATUS_OUTPUT_BUDGET] + '\n…(truncated)'
-            await user.send(
+            await send_dm_chunked(
+                user,
                 f"🔔 bridget online.\n\n{summary}\n\n"
-                f"Send `/help` for a list of commands."
+                f"Send `/help` for a list of commands.",
             )
         except discord.HTTPException as e:
             _log(f'HTTPException in startup DM (with status): {e}')
@@ -1116,10 +1118,8 @@ async def watch_mailbox(user: discord.User):
                         f"📬 **{mail['from']}** — {mail['subject']}\n"
                         f"```\n{body_preview}\n```"
                     )
-                    if len(msg) > DISCORD_MSG_LIMIT:
-                        msg = msg[:DISCORD_MSG_LIMIT] + '…'
                     try:
-                        await user.send(msg)
+                        await send_dm_chunked(user, msg)
                         seen.add(fname)
                     except discord.HTTPException as e:
                         _log(f'HTTPException in watch_mailbox send ({fname}): {e}')
@@ -1167,7 +1167,7 @@ async def watch_idea_claims(user: discord.User):
                 for iid in sorted(new_ids):
                     msg = f'🧠 architect claimed {iid}: {titles.get(iid, "?")}'
                     try:
-                        await user.send(msg)
+                        await send_dm_chunked(user, msg)
                     except discord.HTTPException as e:
                         _log(f'HTTPException in watch_idea_claims send: {e}')
 
@@ -1220,7 +1220,7 @@ async def watch_task_transitions(user: discord.User):
             else:
                 for msg in transitions:
                     try:
-                        await user.send(msg)
+                        await send_dm_chunked(user, msg)
                     except discord.HTTPException as e:
                         _log(f'HTTPException in watch_task_transitions send: {e}')
 
@@ -1382,6 +1382,175 @@ def chunk_for_discord(text: str, limit: int = 1700, max_chunks: int = 3) -> list
         )
         return kept
     return chunks
+
+
+# --- send_dm_chunked (mg-a3ef): split long DMs into sequential messages ----
+#
+# Robin (the Discord ↔ pogo bridge on Ocean) handles long agent output by
+# splitting on newline boundaries and sending pieces back-to-back. Bridget
+# previously truncated at DISCORD_MSG_LIMIT with an ellipsis, dropping
+# content. This helper matches Robin's split-and-stream approach so the
+# full body lands in DMs.
+#
+# Two layers:
+#   _split_for_dm(body, max_chars) — pure: paragraph/line split with
+#       ``` fence repair across cuts (close + reopen with same lang tag).
+#   send_dm_chunked(target, body, chunk_size) — async: drives target.send
+#       per chunk with a fixed inter-chunk sleep (Discord per-DM cap is
+#       ~5/5s; 0.25s ⇒ ≤4/s burst, well under).
+# Empty / whitespace-only bodies are no-ops (Discord rejects empty msgs).
+
+DM_CHUNK_SIZE = 1800        # under Discord's 2000-char hard cap, leaving room for framing.
+DM_CHUNK_DELAY = 0.25       # seconds between sequential chunks.
+# Reserved per chunk for fence-repair tokens (```lang prefix + \n``` suffix).
+_DM_FENCE_RESERVE = 16
+
+
+def _line_opens_or_closes_fence(line: str) -> tuple[bool, str]:
+    """If `line` starts with ``` (after leading whitespace), return (True, lang).
+
+    `lang` is whatever follows the opening fence (e.g. 'python', '') with
+    surrounding whitespace stripped. Closing fences yield ('', True) too —
+    the caller tracks open/close by toggling state.
+    """
+    stripped = line.lstrip()
+    if not stripped.startswith('```'):
+        return False, ''
+    return True, stripped[3:].strip()
+
+
+def _split_for_dm(body: str, max_chars: int = DM_CHUNK_SIZE) -> list[str]:
+    """Split `body` into chunks of ≤ `max_chars`, preserving markdown.
+
+    Strategy:
+    - If body fits, return as-is.
+    - Greedy-pack paragraphs (\\n\\n separated); paragraphs that are
+      themselves too long get sub-split by line; lines longer than budget
+      are hard-cut (rare — overlong unbroken tokens).
+    - After packing, repair ``` fences: any chunk that closes mid-fence
+      gets a trailing \\n``` and the next chunk is prefixed with ```<lang>
+      so syntax highlighting survives the split. The pack budget reserves
+      _DM_FENCE_RESERVE chars for these repair tokens.
+    """
+    if not body:
+        return ['']
+    if len(body) <= max_chars:
+        return [body]
+
+    safe_budget = max(1, max_chars - _DM_FENCE_RESERVE)
+    raw = _greedy_pack_paragraphs(body, safe_budget)
+    return _repair_fences(raw, max_chars)
+
+
+def _greedy_pack_paragraphs(body: str, budget: int) -> list[str]:
+    """Pack \\n\\n-separated paragraphs into ≤budget chunks (no fence repair)."""
+    chunks: list[str] = []
+    current = ''
+    for para in body.split('\n\n'):
+        sep = '\n\n' if current else ''
+        if len(current) + len(sep) + len(para) <= budget:
+            current = current + sep + para
+            continue
+        if current:
+            chunks.append(current)
+            current = ''
+        if len(para) <= budget:
+            current = para
+            continue
+        line_chunks = _pack_lines(para, budget)
+        chunks.extend(line_chunks[:-1])
+        current = line_chunks[-1]
+    if current:
+        chunks.append(current)
+    return chunks
+
+
+def _pack_lines(para: str, budget: int) -> list[str]:
+    """Sub-split a single paragraph (no \\n\\n) by line boundaries."""
+    chunks: list[str] = []
+    current = ''
+    for line in para.split('\n'):
+        sep = '\n' if current else ''
+        if len(current) + len(sep) + len(line) <= budget:
+            current = current + sep + line
+            continue
+        if current:
+            chunks.append(current)
+            current = ''
+        if len(line) <= budget:
+            current = line
+            continue
+        for i in range(0, len(line), budget):
+            chunks.append(line[i:i + budget])
+        current = ''
+    if current:
+        chunks.append(current)
+    return chunks or ['']
+
+
+def _repair_fences(chunks: list[str], max_chars: int) -> list[str]:
+    """Auto-close + reopen ``` fences split across chunks.
+
+    For each chunk we walk its lines toggling fence state. If the chunk
+    ends mid-fence, append '\\n```'; the next chunk gets a '```<lang>\\n'
+    prefix to reopen. `max_chars` is enforced as a final safety net —
+    repair tokens are within the reserve budgeted by the caller.
+    """
+    if not chunks:
+        return chunks
+    repaired: list[str] = []
+    open_lang: str | None = None
+    for chunk in chunks:
+        prefix = ''
+        if open_lang is not None:
+            prefix = '```' + open_lang + '\n'
+        body = prefix + chunk
+        # Walk lines from a clean state — the prefix's ``` line (if any)
+        # re-toggles new_open to the carried lang on its own, so we don't
+        # double-count by seeding with open_lang here.
+        new_open: str | None = None
+        for line in body.split('\n'):
+            toggled, lang = _line_opens_or_closes_fence(line)
+            if not toggled:
+                continue
+            new_open = lang if new_open is None else None
+        suffix = ''
+        if new_open is not None:
+            suffix = '\n```'
+        repaired.append(body + suffix)
+        open_lang = new_open
+    return repaired
+
+
+async def send_dm_chunked(
+    target,
+    body: str,
+    chunk_size: int = DM_CHUNK_SIZE,
+    delay: float = DM_CHUNK_DELAY,
+) -> None:
+    """Send `body` via `target.send()`, splitting into multiple DMs if long.
+
+    `target` is any object with an async `.send(text)` method (discord
+    User / Member / DMChannel / Messageable). Chunks are emitted in order
+    with `delay` seconds between them so we stay under Discord's per-DM
+    burst limit (discord.py also handles 429s internally; this delay is
+    extra cushion).
+
+    Empty / whitespace-only bodies are silent no-ops — Discord rejects
+    empty messages and they would otherwise raise HTTPException.
+
+    Raises whatever `target.send()` raises — callers wrap in try/except
+    to match the existing per-DM error model.
+    """
+    if not body or not body.strip():
+        return
+    chunks = _split_for_dm(body, chunk_size)
+    for i, chunk in enumerate(chunks):
+        if not chunk:
+            continue
+        if i > 0:
+            await asyncio.sleep(delay)
+        await target.send(chunk)
 
 
 def find_mails_for(mg_id: str) -> list:
@@ -2686,11 +2855,9 @@ async def on_message(message: discord.Message):
     chunks = reply if isinstance(reply, list) else [reply]
     try:
         for i, chunk in enumerate(chunks):
-            if len(chunk) > DISCORD_MSG_LIMIT:
-                chunk = chunk[:DISCORD_MSG_LIMIT] + '…'
             if i > 0:
-                await asyncio.sleep(0.1)
-            await message.channel.send(chunk)
+                await asyncio.sleep(DM_CHUNK_DELAY)
+            await send_dm_chunked(message.channel, chunk)
     except discord.HTTPException as e:
         _log(f'HTTPException in on_message reply send: {e}')
 

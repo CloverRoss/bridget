@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `send_dm_chunked(target, body, chunk_size=1800)` helper splits long DMs
+  into multiple sequential messages instead of truncating with an ellipsis.
+  Replaces direct `user.send` / `channel.send` calls in the watch_mailbox,
+  watch_idea_claims, watch_task_transitions, startup-DM, and on_message
+  reply paths. Split prefers paragraph (`\n\n`) boundaries, falls back to
+  line boundaries, hard-cuts as a last resort, and auto-closes + reopens
+  ``` code fences across chunks so syntax highlighting carries over.
+  Robin's pattern from `/opt/pogo/robin/bot.py`, ported to bridget.
+  (mg-a3ef, Robin port item 3)
+
 ### Changed
 
 - Command parser now requires a leading `/` prefix on every command
