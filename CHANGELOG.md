@@ -9,6 +9,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Chat-relay: non-slash DMs now buffer for the crew agent set by
+  `/route` and trigger a `pogo nudge <agent> "N new bridget messages"`
+  (where N is the per-recipient pending count). Buffer lives at
+  `~/.pogo/bridget-chat-buffer.json` (schema `{agent: [{ts, body}, …]}`)
+  under fcntl-locked read-modify-write so daemon-side append and
+  agent-side drain don't race. The agent drains its queue by running
+  the new `bridget chat read <agent>` CLI subcommand, which prints
+  `<N> new bridget message(s) for <agent>:` followed by `[<iso-ts>]
+  <body>` lines (oldest first) and clears the buffer atomically. Like
+  `bridget chat <agent> <body>`, the `read` form short-circuits before
+  `load_config` / the discord import, so polecats and crew can invoke
+  it without bridget's full venv. The user's reply is `💬 sent to
+  \`<agent>\` (<N> pending)` on success; if the nudge fails, the
+  message is still buffered and the reply surfaces the nudge error so
+  delivery isn't silent. Empty / whitespace DMs return the empty-reply
+  hint instead of buffering noise. Closes the slash-refactor TODO from
+  mg-a0f3 (chat-relay placeholder → real flow). (mg-c869, Robin port
+  item 1)
+
 - `/route [<agent>]` slash command selects which crew agent receives the
   user's non-slash DMs. Valid agents: `mayor`, `director`, `architect`,
   `doctor`. Default is `mayor`. With no argument, `/route` reports the
@@ -46,15 +65,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Command parser now requires a leading `/` prefix on every command
-  (Robin-style slash commands; Robin port item 2). Non-slash DMs are
-  reserved for the chat-relay path (wired in a follow-up item); they
-  currently reply with a `chat-relay not yet wired` placeholder so the
-  user knows what happened. Un-prefixed commands still execute for one
-  release with a stderr deprecation warning (`deprecated: bridget
+  (Robin-style slash commands; Robin port item 2). Non-slash DMs route
+  to the chat-relay (mg-c869) — buffered for the agent set by `/route`
+  and pushed via `pogo nudge`. Un-prefixed commands still execute for
+  one release with a stderr deprecation warning (`deprecated: bridget
   command \`<verb>\` sent without leading "/" prefix`) so muscle memory
-  doesn't break overnight; back-compat drops with the chat-relay
-  cutover. Help menu, COMMAND_LIST startup DM, and README are updated
-  to show the `/` form. (mg-a0f3)
+  doesn't break overnight; back-compat drops in a follow-up. Help menu,
+  COMMAND_LIST startup DM, and README are updated to show the `/` form.
+  (mg-a0f3)
 
 ### Added
 

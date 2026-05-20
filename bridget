@@ -67,6 +67,14 @@ MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 ROUTE_FILE = HOME / '.pogo' / 'bridget-route.json'
 ROUTE_VALID_AGENTS = ('mayor', 'director', 'architect', 'doctor')
 DEFAULT_ROUTE = 'mayor'
+# Chat-relay buffer (mg-c869 — Robin port item 1). Non-slash DMs are
+# appended here keyed by the recipient agent (from /route); the recipient
+# gets a `N new bridget messages` nudge and drains the buffer by running
+# `bridget chat read <agent>` from its own context. Single JSON file
+# under fcntl-locked read-modify-write so concurrent daemon append and
+# CLI drain don't race. Schema: `{agent: [{ts, body}, ...]}`.
+CHAT_BUFFER_FILE = HOME / '.pogo' / 'bridget-chat-buffer.json'
+CHAT_BUFFER_LOCK = HOME / '.pogo' / 'bridget-chat-buffer.lock'
 # Guard against duplicate watcher spawn when Discord re-fires on_ready
 # on gateway reconnect (e.g., after laptop sleep). The watchers themselves
 # survive reconnects; only the spawn step needs guarding (mg-f7c5).
@@ -407,12 +415,12 @@ COMMANDS_BY_NAME = {c['name']: c for c in COMMANDS}
 # Slash-command parser (mg-a0f3 — Robin port item 2). Robin (DO bridget) uses
 # Discord's native slash commands; bridget on iMessage/DM has to emulate the
 # same UX in text-command form. All commands now expect a leading `/`; any
-# non-slash text routes to the chat-relay placeholder until items 1/5/6
-# wire the actual chat flow.
+# non-slash text routes to the chat-relay (mg-c869), which buffers the
+# message for the agent named by /route (mg-6b2b) and nudges that agent.
 #
 # Back-compat: un-prefixed commands still execute for one release, with a
-# stderr deprecation warning per invocation. Drop the back-compat once
-# chat-relay lands (item 5 — `/route`).
+# stderr deprecation warning per invocation. Dropped in a follow-up once
+# the chat-relay cutover has bedded in.
 COMMAND_VERBS = frozenset({
     'approve', 'reject', 'revise', 'explain', 'kickoff',
     'read', 'open', 'mail', 'dismiss',
@@ -427,9 +435,11 @@ COMMAND_VERBS = frozenset({
 # between verb and payload is required), so they need prefix matching
 # rather than first-token equality.
 COMMAND_VERB_PREFIXES = ('idea:', 'bug:')
-CHAT_RELAY_PLACEHOLDER = (
-    'chat-relay not yet wired — DM a recognized `/`-prefixed command, or '
-    'send `/help` to see what bridget understands.'
+# Reply for empty / whitespace-only DMs: nothing to buffer, so point the
+# user at /help instead of silently swallowing the message.
+CHAT_RELAY_EMPTY_REPLY = (
+    'empty message — send `/help` to see commands, or type a message to '
+    'chat with the agent set by `/route`.'
 )
 
 
@@ -503,13 +513,122 @@ def write_chat_drop(
     return final
 
 
+# --- chat-relay buffer (mg-c869 — Robin port item 1) --------------------
+#
+# User → Bridget (non-slash DM) → buffer for current /route target →
+# `pogo nudge <agent> "N new bridget messages"` → agent runs
+# `bridget chat read <agent>` to drain. The reverse direction (agent →
+# user DM) goes through write_chat_drop above (mg-c05a).
+#
+# Storage: a single JSON file at CHAT_BUFFER_FILE keyed by recipient
+# agent: `{agent: [{"ts": iso-utc, "body": "..."}, ...]}`. Read-modify-
+# write happens under an fcntl exclusive lock on CHAT_BUFFER_LOCK so the
+# daemon's async append doesn't race the agent-side drain CLI.
+
+def _load_chat_buffer_unlocked() -> dict:
+    """Read CHAT_BUFFER_FILE. Returns {} on missing/corrupt/non-dict. Caller
+    must hold the buffer lock; for casual reads use _with_chat_buffer_lock."""
+    if not CHAT_BUFFER_FILE.exists():
+        return {}
+    try:
+        data = json.loads(CHAT_BUFFER_FILE.read_text())
+    except Exception as e:
+        print(f'load_chat_buffer parse error: {e}', file=sys.stderr)
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # Drop any per-agent entry that isn't a list, defensively.
+    return {k: v for k, v in data.items() if isinstance(v, list)}
+
+
+def _save_chat_buffer_unlocked(buf: dict) -> None:
+    """Atomically write CHAT_BUFFER_FILE. Caller must hold the buffer lock."""
+    CHAT_BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    tmp = CHAT_BUFFER_FILE.parent / (CHAT_BUFFER_FILE.name + '.tmp')
+    tmp.write_text(json.dumps(buf, indent=2, sort_keys=True) + '\n')
+    os.replace(tmp, CHAT_BUFFER_FILE)
+
+
+def _with_chat_buffer_lock(callback):
+    """Run callback(buffer_dict) under an fcntl.flock-serialized read-modify-
+    write cycle. Loads the buffer, hands the dict to callback (which may
+    mutate it), persists, returns callback's return value.
+
+    The lock file is a separate sentinel (CHAT_BUFFER_LOCK) so the data
+    file's atomic rename doesn't unlink the active lock handle."""
+    import fcntl
+    CHAT_BUFFER_FILE.parent.mkdir(parents=True, exist_ok=True)
+    with open(CHAT_BUFFER_LOCK, 'w') as lock_fh:
+        fcntl.flock(lock_fh.fileno(), fcntl.LOCK_EX)
+        try:
+            buf = _load_chat_buffer_unlocked()
+            result = callback(buf)
+            _save_chat_buffer_unlocked(buf)
+            return result
+        finally:
+            fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
+
+
+def append_chat_buffer(recipient: str, body: str) -> int:
+    """Append a message for `recipient` to the buffer. Returns the new
+    per-recipient count (the N for the `N new bridget messages` nudge)."""
+    def _do(buf):
+        msgs = buf.setdefault(recipient, [])
+        ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+            '%Y-%m-%dT%H:%M:%SZ'
+        )
+        msgs.append({'ts': ts, 'body': body})
+        return len(msgs)
+    return _with_chat_buffer_lock(_do)
+
+
+def drain_chat_buffer(recipient: str) -> list[dict]:
+    """Return all queued messages for `recipient` and clear them from disk.
+
+    Empty list when nothing pending — the recipient key is removed from
+    the buffer so it doesn't pile up empty entries across drain cycles."""
+    def _do(buf):
+        return buf.pop(recipient, [])
+    return _with_chat_buffer_lock(_do)
+
+
+def format_chat_buffer_drain(agent: str, msgs: list[dict]) -> str:
+    """Render the drain output that `bridget chat read <agent>` prints.
+
+    Empty: a one-liner so the agent's caller can distinguish a hit-the-
+    bottom drain from a parse error. Non-empty: a count header followed
+    by `[ts] body` lines, oldest first (insertion order)."""
+    if not msgs:
+        return f'No new bridget messages for {agent}.'
+    plural = '' if len(msgs) == 1 else 's'
+    lines = [f'{len(msgs)} new bridget message{plural} for {agent}:', '']
+    for m in msgs:
+        ts = m.get('ts') or '?'
+        body = m.get('body') or ''
+        lines.append(f'[{ts}] {body}')
+    return '\n'.join(lines)
+
+
 def _chat_cli_main(argv: list[str]) -> int:
-    """Handle `bridget chat <agent_name> <body...>` — drop a chat file.
+    """Handle the `bridget chat …` CLI verbs.
+
+    Two forms:
+        bridget chat <agent_name> <body...>   — agent → user DM (mg-c05a)
+        bridget chat read <agent_name>        — drain user → agent buffer
 
     Exit codes: 0 on success, 2 on usage error (missing args / empty body
     / empty agent name). Pure stdlib — must work in venvs without
     discord.py installed.
     """
+    if not argv:
+        print(
+            'bridget: usage: bridget chat <agent_name> <body...>\n'
+            '         or:    bridget chat read <agent_name>',
+            file=sys.stderr,
+        )
+        return 2
+    if argv[0] == 'read':
+        return _chat_read_cli_main(argv[1:])
     if len(argv) < 2:
         print(
             'bridget: usage: bridget chat <agent_name> <body...>',
@@ -525,6 +644,32 @@ def _chat_cli_main(argv: list[str]) -> int:
         print('bridget: chat body cannot be empty', file=sys.stderr)
         return 2
     write_chat_drop(agent_name, body)
+    return 0
+
+
+def _chat_read_cli_main(argv: list[str]) -> int:
+    """Drain the chat-relay buffer for `<agent_name>` and print contents.
+
+    Always exits 0 when the agent name is valid — an empty buffer is a
+    normal result, not an error. The caller (typically an agent reacting
+    to a `N new bridget messages` nudge) reads stdout and dispatches the
+    messages from there.
+    """
+    if len(argv) < 1:
+        print(
+            'bridget: usage: bridget chat read <agent_name>',
+            file=sys.stderr,
+        )
+        return 2
+    agent_name = argv[0].strip()
+    if not agent_name:
+        print(
+            'bridget: chat read agent_name cannot be empty',
+            file=sys.stderr,
+        )
+        return 2
+    msgs = drain_chat_buffer(agent_name)
+    print(format_chat_buffer_drain(agent_name, msgs))
     return 0
 
 
@@ -2311,10 +2456,9 @@ def handle_command(text: str) -> str | list[str]:
     Three routes:
     1. `/<verb> …`  → strip slash and dispatch (canonical form).
     2. `<known verb> …` (no slash) → log deprecation, then dispatch. Kept
-       for one release so existing reflexes don't break overnight; drops
-       once chat-relay (item 5) makes the distinction non-negotiable.
-    3. anything else → chat-relay placeholder. Item 1 of the Robin port
-       wires this to the real chat flow.
+       for one release so existing reflexes don't break overnight.
+    3. anything else → chat-relay (mg-c869): buffer the message for the
+       agent set by /route and nudge them with `N new bridget messages`.
     """
     text = text.strip()
     if text.startswith('/'):
@@ -2326,7 +2470,32 @@ def handle_command(text: str) -> str | list[str]:
             f'prefix; use `/{first}` instead (back-compat drops with chat-relay)'
         )
         return _dispatch_command(text)
-    return CHAT_RELAY_PLACEHOLDER
+    return _route_to_chat_relay(text)
+
+
+def _route_to_chat_relay(text: str) -> str:
+    """Buffer a non-slash DM for the current /route target and nudge them.
+
+    Returns a reply for the user. The buffer append always succeeds (it's
+    a local fcntl-locked json write); the nudge can fail (no pogo on
+    PATH, agent dead) — in that case the message is still buffered and
+    the agent will pick it up on its next bridget-mail check, but the
+    user sees the nudge error so they know the delivery wasn't immediate.
+    """
+    body = text.strip()
+    if not body:
+        return CHAT_RELAY_EMPTY_REPLY
+    recipient = load_route()
+    count = append_chat_buffer(recipient, body)
+    plural = '' if count == 1 else 's'
+    nudge_msg = f'{count} new bridget message{plural}'
+    rc, out, err = run_pogo(['nudge', '--immediate', recipient, nudge_msg])
+    if rc != 0:
+        return (
+            f'💬 buffered for `{recipient}` ({count} pending) '
+            f'but nudge failed: {(err or out).strip()[:200]}'
+        )
+    return f'💬 sent to `{recipient}` ({count} pending)'
 
 
 def _dispatch_command(text: str) -> str | list[str]:

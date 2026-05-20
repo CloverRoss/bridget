@@ -123,10 +123,11 @@ director-side configuration only).
 ## Commands (DM the bot)
 
 All commands are prefixed with `/` (Robin port item 2, mg-a0f3). Non-slash
-messages are reserved for the chat-relay path (wired in a follow-up); they
-currently get a placeholder reply. Un-prefixed commands still execute for
-one release with a stderr deprecation warning, but the back-compat path
-drops once chat-relay lands.
+DMs flow to the **chat-relay** (mg-c869): they're buffered for the crew
+agent set by `/route` and the recipient gets a `pogo nudge … "N new
+bridget messages"`. See [Chat-relay](#chat-relay-user--agent-dms) below.
+Un-prefixed legacy commands still execute for one release with a stderr
+deprecation warning, but the back-compat path drops in a follow-up.
 
 - `/approve mg-XXXX` (or `dr-XXXX`) — approve a design (auto-clears related mails).
 - `/reject mg-XXXX <reason>` (or `dr-XXXX`) — shelve idea + clear mails.
@@ -157,7 +158,38 @@ drops once chat-relay lands.
 bridget only acts on DMs from the user whose ID is in `DISCORD_USER_ID`;
 messages from anyone else are ignored.
 
-## Agent → user chat (CLI)
+## Chat-relay (user ↔ agent DMs)
+
+Bridget mirrors Robin's Discord-native two-way chat in iMessage/DM form.
+Slash commands (`/help`, `/approve`, …) are reserved for the bridget
+control surface; **everything that isn't a slash command is chat**.
+
+### User → agent (non-slash DM)
+
+Any non-slash DM is buffered for the crew agent set by `/route`
+(`mayor` / `director` / `architect` / `doctor`; default `mayor`) and the
+recipient gets a `pogo nudge --immediate <agent> "N new bridget
+messages"`, where N is the per-recipient pending count. The buffer
+lives at `~/.pogo/bridget-chat-buffer.json` (schema `{agent: [{ts,
+body}, …]}`), serialized via fcntl-locked read-modify-write so the
+daemon's append and the agent-side drain don't race. The user's reply
+is `💬 sent to \`<agent>\` (<N> pending)`; if the nudge itself fails
+the message is still buffered and the reply surfaces the nudge error
+so delivery isn't silent. Empty / whitespace DMs aren't buffered —
+they reply with a `/help` hint.
+
+The agent drains its queue with the CLI:
+
+```
+bridget chat read <agent_name>
+```
+
+Prints `<N> new bridget message(s) for <agent>:` followed by `[<iso-ts>]
+<body>` lines (oldest first) and clears that recipient's buffer
+atomically. An empty buffer is a normal result and exits 0 with `No
+new bridget messages for <agent>.` (mg-c869, Robin port item 1)
+
+### Agent → user (CLI)
 
 Crew agents (and polecats) can push a DM to the user by invoking the
 bridget script as a CLI:
@@ -180,7 +212,8 @@ bodies are split into multiple sequential DMs by `send_dm_chunked`
   body or empty agent name exits 2 with a usage line on stderr.
 - The CLI path short-circuits before `load_config` and the `discord`
   import, so it runs in environments without bridget's full venv
-  installed (polecat subprocess calls, ephemeral agent contexts).
+  installed (polecat subprocess calls, ephemeral agent contexts). The
+  `bridget chat read <agent>` drain form shares the same fast path.
 - Successful delivery moves the file from `new/` to `cur/`, so a daemon
   restart doesn't redeliver. On a send failure the file stays in `new/`
   and the next tick retries.

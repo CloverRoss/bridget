@@ -3,9 +3,13 @@
 Covers:
 - `/<verb> …` strips the slash and routes to the same dispatcher.
 - `<verb> …` (no slash) still executes but logs a stderr deprecation warning
-  (back-compat for one release; drops once chat-relay lands).
-- Any non-slash, non-verb message routes to the `chat-relay not yet wired`
-  placeholder instead of falling through to `Unrecognized`.
+  (back-compat for one release).
+- Empty / whitespace-only DMs reply with the empty-message hint (no
+  buffer, no nudge).
+- Freeform non-slash text routes to the live chat-relay buffer
+  (mg-c869) — full coverage lives in test_chat_relay_buffer; this file
+  only verifies the parser dispatches to the relay rather than falling
+  through to `Unrecognized`.
 - `_is_known_verb` recognizes every command verb (plus the colon-suffixed
   `idea:` / `bug:` forms) and rejects freeform chat.
 """
@@ -14,6 +18,7 @@ import os
 import sys
 from importlib.machinery import SourceFileLoader
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -125,7 +130,7 @@ def test_slash_idea_filed(bridget, monkeypatch):
     assert '✓ idea filed' in reply
 
 
-# -- handle_command: non-slash, non-verb → chat-relay placeholder ----------
+# -- handle_command: non-slash, non-verb → live chat-relay (mg-c869) -------
 
 @pytest.mark.parametrize('text', [
     'hello there',
@@ -134,24 +139,34 @@ def test_slash_idea_filed(bridget, monkeypatch):
     'thanks for the help',
     'whatever',
 ])
-def test_freeform_text_routes_to_chat_relay_placeholder(bridget, text):
-    reply = bridget.handle_command(text)
-    assert reply == bridget.CHAT_RELAY_PLACEHOLDER
-    assert 'chat-relay not yet wired' in reply
+def test_freeform_text_routes_to_chat_relay(bridget, text):
+    # mg-c869 wired the relay: freeform text gets buffered for the
+    # /route target and triggers a `pogo nudge`. We don't recheck the
+    # buffer contents here (that's test_chat_relay_buffer); we just
+    # assert the reply shape is the relay-confirmation, not the legacy
+    # `Unrecognized` fallback.
+    with patch.object(bridget, 'run_pogo', return_value=(0, '', '')):
+        reply = bridget.handle_command(text)
+    assert '💬' in reply
+    # Default route is mayor, so confirmation names mayor.
+    assert 'mayor' in reply
+    # Drain so subsequent tests in this module don't see stray entries.
+    bridget.drain_chat_buffer('mayor')
 
 
-def test_empty_message_routes_to_chat_relay_placeholder(bridget):
-    # Empty / whitespace-only DMs aren't commands; route to placeholder
-    # rather than dispatching to the legacy `Unrecognized` fallback.
-    assert bridget.handle_command('') == bridget.CHAT_RELAY_PLACEHOLDER
-    assert bridget.handle_command('    ') == bridget.CHAT_RELAY_PLACEHOLDER
+def test_empty_message_returns_empty_reply(bridget):
+    # Empty / whitespace-only DMs aren't worth buffering — we return a
+    # one-liner pointing at /help rather than dispatching to the legacy
+    # `Unrecognized` fallback or queuing noise for the route target.
+    assert bridget.handle_command('') == bridget.CHAT_RELAY_EMPTY_REPLY
+    assert bridget.handle_command('    ') == bridget.CHAT_RELAY_EMPTY_REPLY
 
 
-def test_chat_relay_placeholder_mentions_slash_help(bridget):
-    # The placeholder is the user's first signal that bridget didn't
-    # parse their DM as a command — point them at `/help` so they have
-    # a path back.
-    assert '/help' in bridget.CHAT_RELAY_PLACEHOLDER
+def test_empty_reply_mentions_slash_help(bridget):
+    # The empty-message reply is the user's first signal that bridget
+    # didn't parse their DM as a command — point them at `/help` so
+    # they have a path back.
+    assert '/help' in bridget.CHAT_RELAY_EMPTY_REPLY
 
 
 # -- handle_command: un-prefixed legacy form still works + warns -----------
@@ -180,11 +195,15 @@ def test_slash_form_does_not_log_deprecation_warning(bridget, monkeypatch, capsy
     assert 'deprecated' not in err
 
 
-def test_freeform_text_does_not_log_deprecation_warning(bridget, capsys):
+def test_freeform_text_does_not_log_deprecation_warning(bridget, capsys, monkeypatch):
     # Chat-relay path is the *expected* future flow, not a deprecation.
+    monkeypatch.setattr(bridget, 'run_pogo', lambda _args: (0, '', ''))
     bridget.handle_command('hello bridget')
     err = capsys.readouterr().err
     assert 'deprecated' not in err
+    # Cleanup: drain the buffer entry the relay just added so we don't
+    # leak state into other tests sharing the bridget fixture's HOME.
+    bridget.drain_chat_buffer('mayor')
 
 
 # -- COMMAND_LIST + help-menu signatures all carry the slash prefix --------
