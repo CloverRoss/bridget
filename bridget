@@ -3533,6 +3533,7 @@ async def _inject_handler(request):
         )
 
     sender = request.headers.get('X-Robin-Sender', '').strip()
+    recipient = request.headers.get('X-Robin-Recipient', 'mayor').strip()
     ts_str = request.headers.get('X-Robin-Ts', '').strip()
     mac_hex = request.headers.get('X-Robin-Hmac', '').strip().lower()
 
@@ -3567,9 +3568,20 @@ async def _inject_handler(request):
         _inject_audit(audit_id, sender, body_size, '', 'rejected_auth', 'auth')
         return aiohttp.web.json_response({'error': 'auth'}, status=401)
 
+    # HMAC scheme matches Ocean's robin-ping cross_host_ping.auth.compute_hmac:
+    # SHA-256 over "sender|recipient|ts|message" UTF-8. Receiver script
+    # passes Ocean's headers through unchanged; bridget verifies against
+    # the same secret (shared bearer between Ocean and Mac sides).
+    try:
+        body_str_for_hmac = body_raw.decode('utf-8')
+    except UnicodeDecodeError:
+        body_sha16 = hashlib.sha256(body_raw).hexdigest()[:16]
+        _inject_audit(audit_id, sender, body_size, body_sha16,
+                      'rejected_malformed', 'malformed')
+        return aiohttp.web.json_response({'error': 'bad utf8'}, status=400)
     expected_mac = hmac.new(
         secret.encode('utf-8'),
-        f'{ts}\n'.encode('utf-8') + body_raw,
+        f'{sender}|{recipient}|{ts}|{body_str_for_hmac}'.encode('utf-8'),
         hashlib.sha256,
     ).hexdigest()
     if not hmac.compare_digest(expected_mac, mac_hex):
@@ -3588,12 +3600,7 @@ async def _inject_handler(request):
             status=429,
         )
 
-    try:
-        body_str = body_raw.decode('utf-8')
-    except UnicodeDecodeError:
-        _inject_audit(audit_id, sender, body_size, body_sha16,
-                      'rejected_malformed', 'malformed')
-        return aiohttp.web.json_response({'error': 'bad utf8'}, status=400)
+    body_str = body_str_for_hmac
 
     age = _mayor_poll_age_seconds()
     if age is not None and age > INJECT_MAYOR_DOWN_SEC:

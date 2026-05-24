@@ -65,8 +65,9 @@ POST http://127.0.0.1:8765/v1/inject
 | Header | Required | Description |
 |---|---|---|
 | `X-Robin-Sender` | yes | Sending agent name. Vocabulary: `mayor`, `director`, `architect`, `polecat-*`. Used in the bridget message label. |
+| `X-Robin-Recipient` | no (default `mayor`) | Target agent. Today only `mayor` is delivered; future bridget-perceiving agents add to the routing here. |
 | `X-Robin-Ts` | yes | Unix timestamp (integer seconds). Reject if `\|now − ts\| > 300s` (replay defense). |
-| `X-Robin-Hmac` | yes | Hex SHA-256 HMAC: `hmac(secret, ts || "\n" || body)`. Lowercase hex. |
+| `X-Robin-Hmac` | yes | Hex SHA-256 HMAC over the pipe-delimited tuple `sender\|recipient\|ts\|body` (UTF-8 encoded). Matches Ocean's `cross_host_ping.auth.compute_hmac` field order so the receiver script can pass the publisher's HMAC through unchanged. Lowercase hex. |
 | `Content-Type` | yes | `text/plain; charset=utf-8` |
 
 ### Body
@@ -172,17 +173,27 @@ owned by cloverross). 32 bytes of random data, hex-encoded:
 SECRET=a1b2c3d4e5f6...
 ```
 
-Receiver script reads same secret (mirrored install via Robin v2.1
-Gate-D). HMAC computed as:
+The secret value MUST match Ocean's `/etc/pogo-robin-ping/ocean-to-land.env`
+BEARER so the publisher's HMAC verifies on Mac side without re-signing.
+(Receiver script is a thin pass-through; it forwards Ocean's headers
+unchanged.) Same value, distinct files because the trust boundaries
+differ — Ocean's is a system daemon, Mac's is a user process.
+
+HMAC scheme — pipe-delimited tuple, matches Ocean's
+`cross_host_ping.auth.compute_hmac` exactly:
 
 ```python
 import hmac, hashlib
 mac = hmac.new(
-    secret.encode(),
-    f"{ts}\n{body}".encode("utf-8"),
+    secret.encode("utf-8"),
+    f"{sender}|{recipient}|{ts}|{body}".encode("utf-8"),
     hashlib.sha256,
 ).hexdigest()
 ```
+
+Field invariants (mirror Ocean's): none of `sender`, `recipient`, `ts`
+may contain `|` or newlines. `body` may contain `|` (the parser splits
+on the first three `|` only, so message bodies round-trip safely).
 
 Why HMAC and not bearer-token-only: prevents replay via the
 timestamp window AND tampering of body. Loopback-only binding
