@@ -2,7 +2,13 @@
 
 Current planned work. Completed items are removed in the PR that closes them, so this file always reflects what's still ahead. Deferred items live under "Backlog" at the bottom — they're parked behind a trigger, not in flight.
 
-No active work in flight. Everything below is backlog awaiting its trigger.
+## In flight
+
+### ia-5f66 — Inject API (cross-host message injection for Robin v2.1)
+HTTP listener on `127.0.0.1:8765` that surfaces incoming Ocean → Land
+agent pings into mayor's existing bridget chat-perception path. Spec
+at [docs/ia-5f66-inject-api.md](docs/ia-5f66-inject-api.md). Director
+dispatch-ok 2026-05-24 19:59Z; impl in progress.
 
 ## Backlog
 
