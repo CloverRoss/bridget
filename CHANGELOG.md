@@ -9,6 +9,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- ia-5f66 Inject API for cross-host message injection (Robin v2.1
+  pre-req). New aiohttp listener on `127.0.0.1:8765` (port configurable
+  via `BRIDGET_INJECT_PORT`) exposes `POST /v1/inject` that lets
+  Ocean-side Robin v2.1 receiver scripts surface incoming agent pings
+  into mayor's existing bridget chat-perception path. Pings render to
+  mayor as `[From <sender> via Robin] <body>` — perception-identical
+  to a Discord-DM, except for the `via Robin` qualifier. HMAC-SHA256
+  envelope (secret at `~/.pogo/bridget.inject-secret`, mode 0600),
+  ±300s timestamp skew defense, 30 msg/60s/sender sliding-window rate
+  limit, JSONL audit at `~/.pogo/bridget.inject-audit.jsonl` (body
+  hashed not logged), mayor-down 503 detection via
+  `~/.pogo/bridget.last-poll` marker written when
+  `bridget chat read mayor` drains. Loopback-only — Ocean reaches it
+  through the existing Land Bridge v1 ntfy.sh push channel. Full spec:
+  `docs/ia-5f66-inject-api.md`. New runtime dep: `aiohttp>=3.9`.
+
 - Native Discord slash-command registration. bridget now registers a
   `discord.app_commands.CommandTree` and exposes each text-parser verb
   (`/approve`, `/status`, `/inbox`, …) as a native slash command;

@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import hashlib
+import hmac
 import json
 import os
 import re
@@ -34,6 +36,8 @@ import sys
 import time
 import urllib.error
 import urllib.request
+import uuid
+from collections import deque
 from pathlib import Path
 from typing import Optional
 
@@ -670,6 +674,18 @@ def _chat_read_cli_main(argv: list[str]) -> int:
         )
         return 2
     msgs = drain_chat_buffer(agent_name)
+    # ia-5f66: stamp mayor's last-poll timestamp so the Inject API can
+    # detect mayor-down (returns 503 if no read in INJECT_MAYOR_DOWN_SEC).
+    # Only mayor's reads count — other agents have their own perception
+    # paths that the Inject API doesn't gate on.
+    if agent_name == 'mayor':
+        try:
+            ts = datetime.datetime.now(datetime.timezone.utc).strftime(
+                '%Y-%m-%dT%H:%M:%SZ'
+            )
+            (HOME / '.pogo' / 'bridget.last-poll').write_text(ts + '\n')
+        except OSError:
+            pass  # non-fatal; absent marker = always-200 path
     print(format_chat_buffer_drain(agent_name, msgs))
     return 0
 
@@ -3421,6 +3437,207 @@ def _register_slash_commands(tree) -> None:
 _register_slash_commands(tree)
 
 
+# ----- ia-5f66 Inject API (cross-host message injection for Robin v2.1) -----
+#
+# HTTP listener on 127.0.0.1 that lets the Ocean-side Robin v2.1 receiver
+# script (via the existing ntfy.sh push channel from Land Bridge v1) inject
+# incoming agent pings into mayor's bridget message buffer. Renders to mayor
+# as `[From <sender> via Robin] <body>`, identical perception path to a
+# Discord-DM from human. Full spec: docs/ia-5f66-inject-api.md.
+
+INJECT_PORT = int(os.environ.get('BRIDGET_INJECT_PORT', '8765'))
+INJECT_SECRET_FILE = HOME / '.pogo' / 'bridget.inject-secret'
+INJECT_AUDIT_FILE = HOME / '.pogo' / 'bridget.inject-audit.jsonl'
+INJECT_LAST_POLL_FILE = HOME / '.pogo' / 'bridget.last-poll'
+INJECT_RATE_MAX = int(os.environ.get('BRIDGET_INJECT_RATE_MAX', '30'))
+INJECT_RATE_WINDOW = int(os.environ.get('BRIDGET_INJECT_RATE_WINDOW', '60'))
+INJECT_MAX_BODY = 4096
+INJECT_TS_SKEW_SEC = 300
+INJECT_MAYOR_DOWN_SEC = 300
+
+_inject_rate_state: dict[str, deque] = {}
+
+
+def _load_inject_secret() -> str | None:
+    """Return HMAC secret from ~/.pogo/bridget.inject-secret, or None if
+    unconfigured. File shape: one line `SECRET=<hex>` (mode 0600 expected)."""
+    if not INJECT_SECRET_FILE.exists():
+        return None
+    try:
+        for raw in INJECT_SECRET_FILE.read_text().splitlines():
+            line = raw.strip()
+            if line.startswith('SECRET='):
+                return line[len('SECRET='):].strip()
+    except OSError as e:
+        _log(f'inject secret read failed: {e}')
+    return None
+
+
+def _inject_audit(audit_id: str, sender: str, body_size: int,
+                  body_sha16: str, status: str, reason: str | None = None) -> None:
+    """Append one JSONL audit line. Body content NOT logged, only sha hash."""
+    ts = datetime.datetime.now(datetime.timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    line = json.dumps({
+        'ts': ts,
+        'audit_id': audit_id,
+        'from': sender,
+        'body_sha256_first16': body_sha16,
+        'body_bytes': body_size,
+        'status': status,
+        'rejected_reason': reason,
+    })
+    try:
+        with open(INJECT_AUDIT_FILE, 'a') as f:
+            f.write(line + '\n')
+    except OSError as e:
+        _log(f'inject audit write failed: {e}')
+
+
+def _inject_rate_check(sender: str) -> tuple[bool, int]:
+    """Sliding-window per-sender rate check. Returns (ok, retry_after_seconds)."""
+    now = time.time()
+    dq = _inject_rate_state.setdefault(sender, deque())
+    while dq and dq[0] < now - INJECT_RATE_WINDOW:
+        dq.popleft()
+    if len(dq) >= INJECT_RATE_MAX:
+        retry = int(INJECT_RATE_WINDOW - (now - dq[0])) + 1
+        return False, max(retry, 1)
+    dq.append(now)
+    return True, 0
+
+
+def _mayor_poll_age_seconds() -> int | None:
+    """Read ~/.pogo/bridget.last-poll for the most recent mayor-side
+    poll-cycle timestamp; return seconds since that, or None if missing."""
+    if not INJECT_LAST_POLL_FILE.exists():
+        return None
+    try:
+        ts_str = INJECT_LAST_POLL_FILE.read_text().strip()
+        last = datetime.datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
+        now = datetime.datetime.now(datetime.timezone.utc)
+        return int((now - last).total_seconds())
+    except (OSError, ValueError):
+        return None
+
+
+async def _inject_handler(request):
+    import aiohttp.web  # local import; avoid module-level dep at parse time
+    audit_id = uuid.uuid4().hex
+
+    secret = _load_inject_secret()
+    if not secret:
+        _inject_audit(audit_id, 'unknown', 0, '', 'rejected_misconfigured', 'no_secret')
+        return aiohttp.web.json_response(
+            {'error': 'inject not configured (missing ~/.pogo/bridget.inject-secret)'},
+            status=503,
+        )
+
+    sender = request.headers.get('X-Robin-Sender', '').strip()
+    ts_str = request.headers.get('X-Robin-Ts', '').strip()
+    mac_hex = request.headers.get('X-Robin-Hmac', '').strip().lower()
+
+    body_raw = await request.read()
+    body_size = len(body_raw)
+
+    if body_size > INJECT_MAX_BODY:
+        _inject_audit(audit_id, sender or 'unknown', body_size, '',
+                      'rejected_too_large', 'too_large')
+        return aiohttp.web.json_response({'error': 'too large'}, status=413)
+
+    if not sender or not ts_str or not mac_hex:
+        _inject_audit(audit_id, sender or 'unknown', body_size, '',
+                      'rejected_malformed', 'malformed')
+        return aiohttp.web.json_response(
+            {'error': 'missing required header (X-Robin-Sender, X-Robin-Ts, X-Robin-Hmac)'},
+            status=400,
+        )
+
+    if not re.match(r'^[a-z][a-z0-9_-]{0,63}$', sender):
+        _inject_audit(audit_id, 'invalid', body_size, '', 'rejected_malformed', 'malformed')
+        return aiohttp.web.json_response({'error': 'bad sender shape'}, status=400)
+
+    try:
+        ts = int(ts_str)
+    except ValueError:
+        _inject_audit(audit_id, sender, body_size, '', 'rejected_malformed', 'malformed')
+        return aiohttp.web.json_response({'error': 'bad ts'}, status=400)
+
+    now_ts = int(time.time())
+    if abs(now_ts - ts) > INJECT_TS_SKEW_SEC:
+        _inject_audit(audit_id, sender, body_size, '', 'rejected_auth', 'auth')
+        return aiohttp.web.json_response({'error': 'auth'}, status=401)
+
+    expected_mac = hmac.new(
+        secret.encode('utf-8'),
+        f'{ts}\n'.encode('utf-8') + body_raw,
+        hashlib.sha256,
+    ).hexdigest()
+    if not hmac.compare_digest(expected_mac, mac_hex):
+        body_sha16 = hashlib.sha256(body_raw).hexdigest()[:16]
+        _inject_audit(audit_id, sender, body_size, body_sha16, 'rejected_auth', 'auth')
+        return aiohttp.web.json_response({'error': 'auth'}, status=401)
+
+    body_sha16 = hashlib.sha256(body_raw).hexdigest()[:16]
+
+    ok, retry = _inject_rate_check(sender)
+    if not ok:
+        _inject_audit(audit_id, sender, body_size, body_sha16,
+                      'rejected_rate_limit', 'rate_limit')
+        return aiohttp.web.json_response(
+            {'error': 'rate limit', 'retry_after_seconds': retry},
+            status=429,
+        )
+
+    try:
+        body_str = body_raw.decode('utf-8')
+    except UnicodeDecodeError:
+        _inject_audit(audit_id, sender, body_size, body_sha16,
+                      'rejected_malformed', 'malformed')
+        return aiohttp.web.json_response({'error': 'bad utf8'}, status=400)
+
+    age = _mayor_poll_age_seconds()
+    if age is not None and age > INJECT_MAYOR_DOWN_SEC:
+        _inject_audit(audit_id, sender, body_size, body_sha16,
+                      'rejected_mayor_down', 'mayor_down')
+        return aiohttp.web.json_response(
+            {'error': 'mayor not responding', 'last_poll_age_seconds': age},
+            status=503,
+        )
+
+    try:
+        append_chat_buffer('mayor', f'[From {sender} via Robin] {body_str}')
+    except Exception as e:  # noqa: BLE001
+        _inject_audit(audit_id, sender, body_size, body_sha16,
+                      'rejected_buffer_write_failed', 'internal')
+        return aiohttp.web.json_response({'error': f'buffer write failed: {e}'}, status=500)
+
+    _inject_audit(audit_id, sender, body_size, body_sha16, 'delivered')
+    return aiohttp.web.json_response({'delivered': True, 'audit_id': audit_id}, status=200)
+
+
+async def _run_inject_api():
+    """Start the loopback HTTP listener for cross-host message injection.
+
+    Best-effort: bind failures (port in use, etc.) log + return so the
+    rest of bridget keeps running. The listener lives for the lifetime
+    of the asyncio loop."""
+    try:
+        import aiohttp.web
+    except ImportError as e:
+        _log(f'inject API not started: aiohttp missing ({e}). pip install aiohttp>=3.9')
+        return
+    app = aiohttp.web.Application()
+    app.router.add_post('/v1/inject', _inject_handler)
+    runner = aiohttp.web.AppRunner(app)
+    await runner.setup()
+    site = aiohttp.web.TCPSite(runner, '127.0.0.1', INJECT_PORT)
+    try:
+        await site.start()
+        _log(f'inject API listening on 127.0.0.1:{INJECT_PORT}')
+    except OSError as e:
+        _log(f'inject API failed to bind on 127.0.0.1:{INJECT_PORT}: {e}')
+
+
 @client.event
 async def on_ready():
     global _watchers_started, _slash_synced
@@ -3451,6 +3668,7 @@ async def on_ready():
     client.loop.create_task(watch_task_transitions(user))
     client.loop.create_task(watch_idea_claims(user))
     client.loop.create_task(watch_chat(user))
+    client.loop.create_task(_run_inject_api())
     _watchers_started = True
 
 
