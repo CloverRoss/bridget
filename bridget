@@ -80,6 +80,12 @@ DEFAULT_ROUTE = 'mayor'
 # CLI drain don't race. Schema: `{agent: [{ts, body}, ...]}`.
 CHAT_BUFFER_FILE = HOME / '.pogo' / 'bridget-chat-buffer.json'
 CHAT_BUFFER_LOCK = HOME / '.pogo' / 'bridget-chat-buffer.lock'
+# Attachment cache for inbound DMs + outbound CLI --attach (ds-ff7c —
+# Robin v3.0 image+PDF relay). Inbound attachments are sha256-hashed and
+# stashed here so duplicate sends dedup to a single file; the outbound
+# CLI also copies user-supplied --attach files into this dir before
+# handing the cached path to write_chat_drop. Lazy-created on first use.
+CHAT_ATTACHMENTS_DIR = HOME / '.pogo' / 'bridget-attachments'
 # Guard against duplicate watcher spawn when Discord re-fires on_ready
 # on gateway reconnect (e.g., after laptop sleep). The watchers themselves
 # survive reconnects; only the spawn step needs guarding (mg-f7c5).
@@ -490,14 +496,24 @@ def write_chat_drop(
     agent_name: str,
     body: str,
     inbox_dir: Path | None = None,
+    attachments: list[Path] | None = None,
 ) -> Path:
     """Drop a chat-mail file for the bridget daemon to pick up.
 
-    File format: `From: <agent>\\nDate: <iso>\\n\\n<body>\\n` — the same
-    minimal mail envelope parse_mail() already understands. Returns the
-    final path. Filename is `<ns>.<pid>.<safe-agent>` where `safe-agent`
-    has non-`[A-Za-z0-9._-]` chars collapsed to `_` so a hostile sender
-    name can't traverse the filesystem.
+    File format: `From: <agent>\\nDate: <iso>\\n[Attachments: <path>\\n
+    <path>...\\n]\\n<body>\\n` — the same minimal mail envelope
+    parse_mail() already understands plus an optional `Attachments:`
+    multi-line header (ds-ff7c). Returns the final path. Filename is
+    `<ns>.<pid>.<safe-agent>` where `safe-agent` has non-`[A-Za-z0-9._-]`
+    chars collapsed to `_` so a hostile sender name can't traverse the
+    filesystem.
+
+    `attachments`, when supplied, is a list of absolute Paths to files
+    in CHAT_ATTACHMENTS_DIR (the CLI is expected to have already
+    sha256+copied them there). The daemon-side reader parses the
+    header, reattaches them as discord.File objects on the outbound DM,
+    and writes an error chat-buffer entry back if the 25MB total cap
+    is exceeded.
 
     Uses a `<final>.tmp` write-then-rename so the daemon never sees a
     partially-written file in new/.
@@ -512,7 +528,16 @@ def write_chat_drop(
     now_iso = datetime.datetime.now(datetime.timezone.utc).strftime(
         '%Y-%m-%dT%H:%M:%SZ'
     )
-    content = f'From: {agent_name}\nDate: {now_iso}\n\n{body}\n'
+    headers = [f'From: {agent_name}', f'Date: {now_iso}']
+    if attachments:
+        # Each path goes on its own line under the Attachments: header.
+        # Continuation lines start with whitespace so parse_mail's split-
+        # on-blank-line still finds the body boundary correctly.
+        att_lines = [str(p) for p in attachments]
+        headers.append('Attachments: ' + att_lines[0])
+        for extra in att_lines[1:]:
+            headers.append(' ' + extra)
+    content = '\n'.join(headers) + '\n\n' + body + '\n'
     tmp.write_text(content, encoding='utf-8')
     os.rename(tmp, final)
     return final
@@ -574,15 +599,166 @@ def _with_chat_buffer_lock(callback):
             fcntl.flock(lock_fh.fileno(), fcntl.LOCK_UN)
 
 
-def append_chat_buffer(recipient: str, body: str) -> int:
+# Inbound attachment size cap (ds-ff7c — Robin v3.0 image+PDF relay).
+# Discord caps free-tier user uploads at 25 MiB, so anything larger is
+# effectively unreachable through the DM path anyway. We hard-reject at
+# >25 MiB rather than silently truncating: the user gets a one-line
+# warning reply AND a `rejected: too_large` entry in the next chat-buffer
+# append so the receiving agent sees the rejection without needing a
+# second channel.
+CHAT_ATTACHMENT_SIZE_LIMIT = 25 * 1024 * 1024
+# Standalone PDF page-count probe: scan for `/Type /Pages` then the next
+# `/Count N`. Tolerant of whitespace because real PDFs differ; falls back
+# to None on no-match, encrypted PDFs, linearized variants. The body
+# field is "best-effort metadata", never load-bearing.
+_PDF_PAGE_COUNT_RE = re.compile(
+    rb'/Type\s*/Pages[^]]{0,512}?/Count\s+(\d+)',
+    re.DOTALL,
+)
+# Extension hint per mime, used when the Discord filename is missing or
+# extension-less. We don't trust user filenames blindly (path traversal)
+# — write_chat_drop has its own sanitizer, but here the on-disk filename
+# is sha256+ext so there's nothing user-controlled left in it.
+_MIME_TO_EXT = {
+    'image/png': '.png',
+    'image/jpeg': '.jpg',
+    'image/gif': '.gif',
+    'image/webp': '.webp',
+    'image/bmp': '.bmp',
+    'image/svg+xml': '.svg',
+    'image/tiff': '.tiff',
+    'application/pdf': '.pdf',
+}
+
+
+def _probe_pdf_page_count(data: bytes) -> int | None:
+    """Best-effort stdlib PDF page-count from raw bytes. Returns None on
+    any failure — caller treats absence as "unknown", not "error"."""
+    try:
+        m = _PDF_PAGE_COUNT_RE.search(data)
+        if m:
+            return int(m.group(1))
+    except Exception:
+        return None
+    return None
+
+
+def _attachment_ext(att, mime: str) -> str:
+    """Pick a file extension for the cached attachment. Prefer the
+    sender-supplied filename suffix (covers obscure image/* subtypes),
+    otherwise fall back to a mime → ext table, otherwise `.bin`."""
+    name = getattr(att, 'filename', None) or ''
+    if '.' in name:
+        ext = '.' + name.rsplit('.', 1)[1].lower()
+        # cap extension to a sane shape so a hostile filename like
+        # `foo.<200chars>` doesn't grow the cache path unboundedly.
+        if re.fullmatch(r'\.[A-Za-z0-9]{1,8}', ext):
+            return ext
+    return _MIME_TO_EXT.get(mime, '.bin')
+
+
+async def _ingest_attachments(message) -> list[dict]:
+    """Download, validate, and cache attachments from a Discord message.
+
+    Mime gate: image/* (broader than Robin v3.0's jpg/png/gif/webp set —
+    intentional Land delta; the receiving agent's vision model decides
+    what it can actually read) + application/pdf. Other types are
+    silently dropped (no warn — most Discord messages don't carry
+    attachments at all, so a `(no relayed file)` notice would be noise).
+
+    Size gate: >25 MiB → one-line warn-reply to the user AND a
+    {rejected: 'too_large'} entry in the returned list so the receiving
+    agent sees the rejection on its next buffer drain. Smaller files
+    are downloaded via `await attachment.read()` and cached at
+    CHAT_ATTACHMENTS_DIR/<sha256><ext>; dedup is automatic via the
+    content-addressed name.
+
+    Returns a list of dicts: each carries `path` (absolute str),
+    `mime`, `sha256`, `size`, optionally `page_count` (PDFs only) or
+    `rejected` (with `filename` for the warn-line render).
+    """
+    out: list[dict] = []
+    atts = getattr(message, 'attachments', None) or []
+    if not atts:
+        return out
+    CHAT_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    rejected_names: list[str] = []
+    for att in atts:
+        mime = (getattr(att, 'content_type', None) or '').split(';')[0].strip()
+        size = int(getattr(att, 'size', 0) or 0)
+        filename = getattr(att, 'filename', None) or '?'
+        # Mime gate first — silently drop non-relayable types.
+        if not (mime.startswith('image/') or mime == 'application/pdf'):
+            continue
+        if size > CHAT_ATTACHMENT_SIZE_LIMIT:
+            out.append({
+                'rejected': 'too_large',
+                'filename': filename,
+                'mime': mime,
+                'size': size,
+            })
+            rejected_names.append(filename)
+            continue
+        try:
+            data = await att.read()
+        except Exception as exc:  # noqa: BLE001 — log + skip; never crash on_message
+            _log(f'_ingest_attachments: read failed for {filename}: {exc}')
+            continue
+        sha = hashlib.sha256(data).hexdigest()
+        ext = _attachment_ext(att, mime)
+        cached = CHAT_ATTACHMENTS_DIR / (sha + ext)
+        if not cached.exists():
+            tmp = cached.with_suffix(cached.suffix + '.tmp')
+            tmp.write_bytes(data)
+            os.replace(tmp, cached)
+        entry: dict = {
+            'path': str(cached),
+            'mime': mime,
+            'sha256': sha,
+            'size': len(data),
+            'filename': filename,
+        }
+        if mime == 'application/pdf':
+            entry['page_count'] = _probe_pdf_page_count(data)
+        out.append(entry)
+    # Surface rejections to the user inline so they know the chat-relay
+    # body still landed but the file did not. Best-effort: if the reply
+    # fails, the rejected entry in the buffer is the fallback breadcrumb.
+    if rejected_names:
+        try:
+            warn = (
+                '⚠️ attachment(s) over '
+                f'{CHAT_ATTACHMENT_SIZE_LIMIT // (1024 * 1024)}MB '
+                f'were not relayed: {", ".join(rejected_names)}'
+            )
+            await message.reply(warn)
+        except Exception as exc:  # noqa: BLE001 — non-fatal
+            _log(f'_ingest_attachments: warn reply failed: {exc}')
+    return out
+
+
+def append_chat_buffer(
+    recipient: str,
+    body: str,
+    attachments: list[dict] | None = None,
+) -> int:
     """Append a message for `recipient` to the buffer. Returns the new
-    per-recipient count (the N for the `N new bridget messages` nudge)."""
+    per-recipient count (the N for the `N new bridget messages` nudge).
+
+    `attachments`, when supplied, is a list of dicts as returned by
+    _ingest_attachments — each carries path/mime/sha256/size, optionally
+    page_count for PDFs and rejected for size-cap violations. The list
+    is persisted alongside ts/body; old entries without an attachments
+    key default to an empty list at format time (ds-ff7c)."""
     def _do(buf):
         msgs = buf.setdefault(recipient, [])
         ts = datetime.datetime.now(datetime.timezone.utc).strftime(
             '%Y-%m-%dT%H:%M:%SZ'
         )
-        msgs.append({'ts': ts, 'body': body})
+        entry = {'ts': ts, 'body': body}
+        if attachments:
+            entry['attachments'] = attachments
+        msgs.append(entry)
         return len(msgs)
     return _with_chat_buffer_lock(_do)
 
@@ -602,7 +778,10 @@ def format_chat_buffer_drain(agent: str, msgs: list[dict]) -> str:
 
     Empty: a one-liner so the agent's caller can distinguish a hit-the-
     bottom drain from a parse error. Non-empty: a count header followed
-    by `[ts] body` lines, oldest first (insertion order)."""
+    by `[ts] body` lines, oldest first (insertion order). Each entry's
+    attachments (ds-ff7c) render on indented `  📎 <path> (<mime>,
+    <size>B[, <pages>pp])` lines below the body, or `  ⚠️ rejected
+    attachment: <name> (<reason>)` for size-cap rejections."""
     if not msgs:
         return f'No new bridget messages for {agent}.'
     plural = '' if len(msgs) == 1 else 's'
@@ -611,44 +790,172 @@ def format_chat_buffer_drain(agent: str, msgs: list[dict]) -> str:
         ts = m.get('ts') or '?'
         body = m.get('body') or ''
         lines.append(f'[{ts}] {body}')
+        for att in m.get('attachments') or []:
+            if att.get('rejected'):
+                name = att.get('filename') or att.get('path') or '?'
+                reason = att.get('rejected') or 'rejected'
+                lines.append(f'  ⚠️ rejected attachment: {name} ({reason})')
+                continue
+            path = att.get('path') or '?'
+            mime = att.get('mime') or 'application/octet-stream'
+            size = att.get('size')
+            size_str = f'{size}B' if isinstance(size, int) else '?B'
+            extra = ''
+            pages = att.get('page_count')
+            if isinstance(pages, int):
+                extra = f', {pages}pp'
+            lines.append(f'  📎 {path} ({mime}, {size_str}{extra})')
     return '\n'.join(lines)
+
+
+def _guess_mime_from_ext(path: Path) -> str | None:
+    """Map an attachment file's extension to a mime type the relay
+    accepts. Returns None for unrelayable types so the CLI can reject
+    early instead of letting the daemon silently drop them."""
+    ext = path.suffix.lower()
+    table = {
+        '.png':  'image/png',
+        '.jpg':  'image/jpeg',
+        '.jpeg': 'image/jpeg',
+        '.gif':  'image/gif',
+        '.webp': 'image/webp',
+        '.bmp':  'image/bmp',
+        '.svg':  'image/svg+xml',
+        '.tiff': 'image/tiff',
+        '.tif':  'image/tiff',
+        '.pdf':  'application/pdf',
+    }
+    return table.get(ext)
+
+
+def _cache_attachment_for_cli(src: Path) -> Path:
+    """sha256+copy `src` into CHAT_ATTACHMENTS_DIR so cache parity holds
+    across outbound CLI sends. Returns the cached absolute Path."""
+    data = src.read_bytes()
+    sha = hashlib.sha256(data).hexdigest()
+    ext = src.suffix.lower() or '.bin'
+    # Same extension-shape guard as the inbound path: keep cache names
+    # short and known-safe even if the source had a weird suffix.
+    if not re.fullmatch(r'\.[A-Za-z0-9]{1,8}', ext):
+        ext = '.bin'
+    CHAT_ATTACHMENTS_DIR.mkdir(parents=True, exist_ok=True)
+    cached = CHAT_ATTACHMENTS_DIR / (sha + ext)
+    if not cached.exists():
+        tmp = cached.with_suffix(cached.suffix + '.tmp')
+        tmp.write_bytes(data)
+        os.replace(tmp, cached)
+    return cached
 
 
 def _chat_cli_main(argv: list[str]) -> int:
     """Handle the `bridget chat …` CLI verbs.
 
     Two forms:
-        bridget chat <agent_name> <body...>   — agent → user DM (mg-c05a)
+        bridget chat <agent_name> <body...> [--attach FILE ...]
+                                              — agent → user DM (mg-c05a),
+                                                with optional image/PDF
+                                                attachments (ds-ff7c)
         bridget chat read <agent_name>        — drain user → agent buffer
 
-    Exit codes: 0 on success, 2 on usage error (missing args / empty body
-    / empty agent name). Pure stdlib — must work in venvs without
-    discord.py installed.
+    `--attach FILE` is repeatable; each file is validated (mime + size)
+    at parse time so user errors surface immediately instead of being
+    silently dropped on the daemon side. Files are sha256+copied into
+    CHAT_ATTACHMENTS_DIR (parity with inbound cache); the cached paths
+    are what go in the chat-drop envelope.
+
+    Exit codes: 0 on success, 2 on usage error (missing args / empty
+    body / empty agent name / bad --attach). Pure stdlib — must work in
+    venvs without discord.py installed.
     """
     if not argv:
         print(
-            'bridget: usage: bridget chat <agent_name> <body...>\n'
+            'bridget: usage: bridget chat <agent_name> <body...> '
+            '[--attach FILE ...]\n'
             '         or:    bridget chat read <agent_name>',
             file=sys.stderr,
         )
         return 2
     if argv[0] == 'read':
         return _chat_read_cli_main(argv[1:])
-    if len(argv) < 2:
+    # Split positional args from --attach options. --attach takes the
+    # next arg as its value, so we walk argv index-by-index rather than
+    # a single pass; stops at -- so explicit literal `--` separates body
+    # tokens from options if a body word ever starts with `--`.
+    positional: list[str] = []
+    attaches: list[str] = []
+    i = 0
+    seen_end = False
+    while i < len(argv):
+        tok = argv[i]
+        if not seen_end and tok == '--attach':
+            if i + 1 >= len(argv):
+                print(
+                    'bridget: --attach needs a FILE argument',
+                    file=sys.stderr,
+                )
+                return 2
+            attaches.append(argv[i + 1])
+            i += 2
+            continue
+        if not seen_end and tok == '--':
+            seen_end = True
+            i += 1
+            continue
+        positional.append(tok)
+        i += 1
+    if len(positional) < 2:
         print(
-            'bridget: usage: bridget chat <agent_name> <body...>',
+            'bridget: usage: bridget chat <agent_name> <body...> '
+            '[--attach FILE ...]',
             file=sys.stderr,
         )
         return 2
-    agent_name = argv[0].strip()
+    agent_name = positional[0].strip()
     if not agent_name:
         print('bridget: chat agent_name cannot be empty', file=sys.stderr)
         return 2
-    body = ' '.join(argv[1:]).strip()
+    body = ' '.join(positional[1:]).strip()
     if not body:
         print('bridget: chat body cannot be empty', file=sys.stderr)
         return 2
-    write_chat_drop(agent_name, body)
+    cached_paths: list[Path] = []
+    total = 0
+    for raw_path in attaches:
+        src = Path(raw_path).expanduser().resolve()
+        if not src.is_file():
+            print(
+                f'bridget: --attach: not a file: {raw_path}',
+                file=sys.stderr,
+            )
+            return 2
+        mime = _guess_mime_from_ext(src)
+        if mime is None:
+            print(
+                f'bridget: --attach: unsupported file type (image/* + '
+                f'application/pdf only): {raw_path}',
+                file=sys.stderr,
+            )
+            return 2
+        size = src.stat().st_size
+        total += size
+        if size > CHAT_ATTACHMENT_SIZE_LIMIT:
+            mb = CHAT_ATTACHMENT_SIZE_LIMIT // (1024 * 1024)
+            print(
+                f'bridget: --attach: {raw_path} is {size} bytes; cap is '
+                f'{mb} MiB',
+                file=sys.stderr,
+            )
+            return 2
+        cached_paths.append(_cache_attachment_for_cli(src))
+    if total > CHAT_ATTACHMENT_SIZE_LIMIT:
+        mb = CHAT_ATTACHMENT_SIZE_LIMIT // (1024 * 1024)
+        print(
+            f'bridget: --attach total size {total} bytes exceeds the '
+            f'{mb} MiB cap',
+            file=sys.stderr,
+        )
+        return 2
+    write_chat_drop(agent_name, body, attachments=cached_paths or None)
     return 0
 
 
@@ -1554,15 +1861,78 @@ def format_chat_dm(agent_name: str, body: str) -> str:
     return f'[From {agent_name}]: {body.rstrip()}'
 
 
+def _parse_chat_drop_attachments(content: str) -> list[Path]:
+    """Pull the optional `Attachments:` header value(s) from a chat-drop.
+
+    The envelope format is a list of `Key: value` headers terminated by
+    a blank line, then the body. Attachments may appear as a single
+    header line — `Attachments: /path/to/file` — followed by zero or
+    more continuation lines that begin with whitespace (one path per
+    line, leading whitespace stripped). Returns absolute Paths in
+    declaration order. An empty list means the drop has no attachments,
+    which is the case for every pre-ds-ff7c chat drop (backward
+    compatible)."""
+    lines = content.splitlines()
+    paths: list[str] = []
+    in_attach = False
+    for line in lines:
+        if line == '':
+            break
+        low = line.lower()
+        if low.startswith('attachments:'):
+            first = line.split(':', 1)[1].strip()
+            if first:
+                paths.append(first)
+            in_attach = True
+            continue
+        if in_attach and line and line[0] in (' ', '\t'):
+            stripped = line.strip()
+            if stripped:
+                paths.append(stripped)
+            continue
+        # Any non-continuation line ends the Attachments block.
+        in_attach = False
+    return [Path(p) for p in paths if p]
+
+
+async def _send_dm_with_attachments(target, body: str, file_paths: list[Path]) -> None:
+    """Send `body` plus `file_paths` to the DM target as a single send.
+
+    If `body` exceeds DM_CHUNK_SIZE, the first chunk carries the files
+    and subsequent chunks follow as text-only DMs (mirrors
+    send_dm_chunked's pacing). When `file_paths` is empty this falls
+    through to send_dm_chunked unchanged."""
+    if not file_paths:
+        await send_dm_chunked(target, body)
+        return
+    files = [discord.File(str(p)) for p in file_paths]
+    if body and body.strip():
+        chunks = _split_for_dm(body)
+        first = chunks[0]
+        await target.send(content=first, files=files)
+        for chunk in chunks[1:]:
+            if chunk:
+                await asyncio.sleep(DM_CHUNK_DELAY)
+                await target.send(chunk)
+    else:
+        # File-only drops are valid — discord.py accepts a send() with
+        # files= and no content.
+        await target.send(files=files)
+
+
 async def watch_chat(user) -> None:
     """Poll BRIDGET_CHAT_DIR/new for chat drops; DM each then move to cur/.
 
     Mirrors Robin's poll_chat_inbox: agents call `bridget chat <name>
     <body>` which writes a file to new/; this loop picks it up, formats
     `[From <name>]: <body>` and emits via send_dm_chunked (mg-a3ef
-    handles >1800-char bodies). On success the file is renamed into cur/
-    so a daemon restart won't re-deliver. Per-file errors leave the file
-    in new/ for retry on the next tick.
+    handles >1800-char bodies). When the drop carries an `Attachments:`
+    header (ds-ff7c) the listed files are attached to the outbound DM;
+    drops whose attachments total >25 MiB are rejected with a chat-
+    buffer entry written back to the sender so the next read surfaces
+    the failure. On success the file is renamed into cur/ so a daemon
+    restart won't re-deliver. Per-file errors leave the file in new/
+    for retry on the next tick.
     """
     new_dir = BRIDGET_CHAT_DIR / 'new'
     cur_dir = BRIDGET_CHAT_DIR / 'cur'
@@ -1576,10 +1946,44 @@ async def watch_chat(user) -> None:
                 src = new_dir / fname
                 dst = cur_dir / fname
                 try:
-                    mail = parse_mail(src.read_text(encoding='utf-8',
-                                                   errors='replace'))
+                    raw = src.read_text(encoding='utf-8', errors='replace')
+                    mail = parse_mail(raw)
+                    att_paths = _parse_chat_drop_attachments(raw)
+                    # Filter missing paths defensively — the CLI cached
+                    # them, but the cache dir is user-mutable.
+                    resolved: list[Path] = []
+                    missing: list[str] = []
+                    for p in att_paths:
+                        if p.is_file():
+                            resolved.append(p)
+                        else:
+                            missing.append(str(p))
+                    total_size = sum(p.stat().st_size for p in resolved)
+                    if total_size > CHAT_ATTACHMENT_SIZE_LIMIT:
+                        # Refuse the drop, surface to sender via buffer.
+                        mb = CHAT_ATTACHMENT_SIZE_LIMIT // (1024 * 1024)
+                        sender = mail.get('from') or 'unknown'
+                        append_chat_buffer(
+                            sender,
+                            (
+                                f'⚠️ outbound chat drop rejected: '
+                                f'attachments total {total_size} bytes '
+                                f'exceed the {mb} MiB cap'
+                            ),
+                        )
+                        _log(
+                            f'watch_chat: rejected {fname} for size '
+                            f'({total_size}B > {CHAT_ATTACHMENT_SIZE_LIMIT}B)'
+                        )
+                        os.rename(src, dst)
+                        continue
+                    if missing:
+                        _log(
+                            f'watch_chat: {fname} skipping missing '
+                            f'attachment(s): {", ".join(missing)}'
+                        )
                     msg = format_chat_dm(mail['from'], mail['body'])
-                    await send_dm_chunked(user, msg)
+                    await _send_dm_with_attachments(user, msg, resolved)
                     os.rename(src, dst)
                 except discord.HTTPException as e:
                     _log(f'HTTPException in watch_chat send ({fname}): {e}')
@@ -2498,7 +2902,10 @@ def handle_command(text: str) -> str | list[str]:
     return _route_to_chat_relay(text)
 
 
-def _route_to_chat_relay(text: str) -> str:
+def _route_to_chat_relay(
+    text: str,
+    attachments: list[dict] | None = None,
+) -> str:
     """Buffer a non-slash DM for the current /route target and nudge them.
 
     Returns a reply for the user. The buffer append always succeeds (it's
@@ -2506,12 +2913,20 @@ def _route_to_chat_relay(text: str) -> str:
     PATH, agent dead) — in that case the message is still buffered and
     the agent will pick it up on its next bridget-mail check, but the
     user sees the nudge error so they know the delivery wasn't immediate.
-    """
+
+    `attachments`, when supplied, is the dict list from
+    _ingest_attachments — image/PDF entries plus any `rejected:
+    too_large` markers. They're persisted alongside the body and render
+    as 📎 lines on drain (ds-ff7c)."""
     body = text.strip()
-    if not body:
+    if not body and not attachments:
         return CHAT_RELAY_EMPTY_REPLY
+    if not body:
+        # Attachment-only DM: substitute a placeholder body so the
+        # drain output isn't a bare `[ts]` line with only 📎 children.
+        body = '(attachment)'
     recipient = load_route()
-    count = append_chat_buffer(recipient, body)
+    count = append_chat_buffer(recipient, body, attachments=attachments)
     plural = '' if count == 1 else 's'
     nudge_msg = f'{count} new bridget message{plural}'
     rc, out, err = run_pogo(['nudge', '--immediate', recipient, nudge_msg])
@@ -3710,7 +4125,29 @@ async def on_message(message: discord.Message):
         return
     if not isinstance(message.channel, discord.DMChannel):
         return
-    reply = handle_command(message.content)
+    # Ingest attachments before dispatch (ds-ff7c): image/* + PDF go to
+    # the chat-relay buffer alongside the body, oversized ones get a
+    # one-line warn-reply + a rejected entry. Slash and known-verb
+    # commands don't accept attachments — those are dropped with a
+    # separate warning so the user knows to resend as plain chat if
+    # they meant to share a file.
+    text = message.content.strip()
+    is_command = text.startswith('/') or (text and _is_known_verb(text))
+    attachments_present = bool(getattr(message, 'attachments', None))
+    if attachments_present and is_command:
+        try:
+            await message.reply(
+                '⚠️ attachments dropped — commands do not accept '
+                'attachments; resend as chat-relay if you meant to share'
+            )
+        except discord.HTTPException as e:
+            _log(f'on_message attachments-dropped warn failed: {e}')
+        reply = handle_command(message.content)
+    elif attachments_present:
+        ingested = await _ingest_attachments(message)
+        reply = _route_to_chat_relay(message.content, attachments=ingested)
+    else:
+        reply = handle_command(message.content)
     chunks = reply if isinstance(reply, list) else [reply]
     try:
         for i, chunk in enumerate(chunks):

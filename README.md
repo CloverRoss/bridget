@@ -454,6 +454,11 @@ Common failure modes:
   changes or a divergent branch. Resolve manually in the repo; bridget keeps
   running on the old code in the meantime.
 
+## Operating conventions
+
+See [CONVENTIONS.md](CONVENTIONS.md) for rules that apply to agents handling
+attachments relayed through bridget (no cross-LLM leak of user files).
+
 ## Project status
 
 **v1.0 — feature parity with the original author's personal install.** Should
