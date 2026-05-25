@@ -3557,16 +3557,22 @@ async def _inject_handler(request):
         _inject_audit(audit_id, 'invalid', body_size, '', 'rejected_malformed', 'malformed')
         return aiohttp.web.json_response({'error': 'bad sender shape'}, status=400)
 
+    # Ts is ISO8601 UTC with millisecond precision (matches Ocean's
+    # cross_host_ping iso_now_ms() format: YYYY-MM-DDTHH:MM:SS.mmmZ).
+    # Bridget keeps the raw string as the HMAC-input field; only parses
+    # for the skew check.
     try:
-        ts = int(ts_str)
+        ts_dt = datetime.datetime.fromisoformat(ts_str.replace('Z', '+00:00'))
     except ValueError:
         _inject_audit(audit_id, sender, body_size, '', 'rejected_malformed', 'malformed')
-        return aiohttp.web.json_response({'error': 'bad ts'}, status=400)
+        return aiohttp.web.json_response({'error': 'bad ts (expect ISO8601 with ms)'}, status=400)
 
-    now_ts = int(time.time())
-    if abs(now_ts - ts) > INJECT_TS_SKEW_SEC:
+    now_dt = datetime.datetime.now(datetime.timezone.utc)
+    skew_sec = abs((now_dt - ts_dt).total_seconds())
+    if skew_sec > INJECT_TS_SKEW_SEC:
         _inject_audit(audit_id, sender, body_size, '', 'rejected_auth', 'auth')
-        return aiohttp.web.json_response({'error': 'auth'}, status=401)
+        return aiohttp.web.json_response({'error': 'auth (ts skew)'}, status=401)
+    ts = ts_str  # keep string form for HMAC input
 
     # HMAC scheme matches Ocean's robin-ping cross_host_ping.auth.compute_hmac:
     # SHA-256 over "sender|recipient|ts|message" UTF-8. Receiver script
@@ -3612,11 +3618,26 @@ async def _inject_handler(request):
         )
 
     try:
-        append_chat_buffer('mayor', f'[From {sender} via Robin] {body_str}')
+        count = append_chat_buffer('mayor', f'[From {sender} via Robin] {body_str}')
     except Exception as e:  # noqa: BLE001
         _inject_audit(audit_id, sender, body_size, body_sha16,
                       'rejected_buffer_write_failed', 'internal')
         return aiohttp.web.json_response({'error': f'buffer write failed: {e}'}, status=500)
+
+    # Wake mayor with a pogo-nudge so the inject perception path matches
+    # the Discord-DM path. Without this, the buffer entry sits unread
+    # until mayor's next scheduled wakeup — which can be 1h+ during
+    # ambient watch, defeating the sub-second cross-host ping intent.
+    # Failures to nudge are logged but do not fail the inject: the
+    # buffer write is the durable record + the audit captures the state.
+    plural = '' if count == 1 else 's'
+    nudge_msg = f'{count} new bridget message{plural}'
+    try:
+        rc, _out, err = run_pogo(['nudge', '--immediate', 'mayor', nudge_msg])
+        if rc != 0:
+            _log(f'inject nudge failed for audit {audit_id}: {(err or "").strip()[:200]}')
+    except Exception as e:  # noqa: BLE001
+        _log(f'inject nudge raised for audit {audit_id}: {e}')
 
     _inject_audit(audit_id, sender, body_size, body_sha16, 'delivered')
     return aiohttp.web.json_response({'delivered': True, 'audit_id': audit_id}, status=200)
