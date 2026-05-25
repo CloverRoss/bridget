@@ -3608,14 +3608,16 @@ async def _inject_handler(request):
 
     body_str = body_str_for_hmac
 
-    age = _mayor_poll_age_seconds()
-    if age is not None and age > INJECT_MAYOR_DOWN_SEC:
-        _inject_audit(audit_id, sender, body_size, body_sha16,
-                      'rejected_mayor_down', 'mayor_down')
-        return aiohttp.web.json_response(
-            {'error': 'mayor not responding', 'last_poll_age_seconds': age},
-            status=503,
-        )
+    # Mayor-down detection removed (ia-5f66 follow-on, 2026-05-25). The
+    # original 300s last-poll threshold was meant to detect "mayor's not
+    # polling so buffer entries would sit unread" — but the nudge-after-
+    # inject path (line below) actively wakes mayor on every successful
+    # delivery, making time-based mayor-down detection redundant + harmful:
+    # legit pings during mayor's long-sleep windows were being rejected
+    # with 503 while the nudge would have woken mayor and delivered fine.
+    # If mayor is truly dead, the nudge silently fails but the buffer
+    # entry is still durable for when mayor recovers, AND the audit log
+    # captures the attempt — both better signals than the time-based gate.
 
     try:
         count = append_chat_buffer('mayor', f'[From {sender} via Robin] {body_str}')
