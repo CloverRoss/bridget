@@ -83,7 +83,6 @@ _EXPECTED_SLASH_NAMES = {
     'dismiss all': 'dismiss',  # `/dismiss all` is the same slash command as `/dismiss`
     'status': 'status',
     'inbox': 'inbox',
-    'agents': 'agents',
     'nudge': 'nudge',
     'restart': 'restart',
     'preapprove': 'preapprove',
