@@ -86,7 +86,6 @@ _EXPECTED_SLASH_NAMES = {
     'agents': 'agents',
     'nudge': 'nudge',
     'restart': 'restart',
-    'quiet': 'quiet',
     'preapprove': 'preapprove',
     'route': 'route',
     'librarian sync': 'librarian-sync',

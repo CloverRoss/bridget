@@ -59,7 +59,6 @@ def _log(msg: str) -> None:
 HOME = Path.home()
 ENV_FILE = HOME / '.pogo' / 'bridget.env'
 SEEN_FILE = HOME / '.pogo' / 'bridget.seen'
-QUIET_FILE = HOME / '.pogo' / 'quiet.json'
 PREAPPROVAL_FILE = HOME / '.pogo' / 'preapproval.json'
 TASK_STATES_FILE = HOME / '.pogo' / 'bridget.task-states.json'
 IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
@@ -313,11 +312,6 @@ COMMANDS = [
         'description': 'git pull + restart bridget (after merging a PR)',
     },
     {
-        'name': 'quiet',
-        'signature': '/quiet <true|false> [HH:MM HH:MM]',
-        'description': 'toggle agent quiet hours (default 23:00–06:00)',
-    },
-    {
         'name': 'preapprove',
         'signature': '/preapprove [true [fast] | false]',
         'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
@@ -437,7 +431,7 @@ COMMAND_VERBS = frozenset({
     'read', 'open', 'mail', 'dismiss',
     'agents', 'agent', 'crew',
     'nudge', 'restart', 'help', '?', 'commands',
-    'quiet', 'preapprove', 'spend',
+    'preapprove', 'spend',
     'librarian', 'accountant',
     'inbox', 'status',
     'route',
@@ -1134,41 +1128,6 @@ def load_seen() -> set:
 
 def save_seen(seen: set) -> None:
     SEEN_FILE.write_text('\n'.join(sorted(seen)))
-
-
-QUIET_DEFAULTS = {'enabled': False, 'start': '23:00', 'end': '06:00'}
-TIME_RE = re.compile(r'^[0-2]\d:[0-5]\d$')
-
-
-def load_quiet() -> dict:
-    """Read ~/.pogo/quiet.json. Missing/unreadable file → defaults."""
-    if not QUIET_FILE.exists():
-        return {**QUIET_DEFAULTS, 'updated_at': ''}
-    try:
-        d = json.loads(QUIET_FILE.read_text())
-    except Exception as e:
-        print(f'load_quiet parse error: {e}', file=sys.stderr)
-        return {**QUIET_DEFAULTS, 'updated_at': ''}
-    return {
-        'enabled': bool(d.get('enabled', False)),
-        'start': d.get('start') or QUIET_DEFAULTS['start'],
-        'end': d.get('end') or QUIET_DEFAULTS['end'],
-        'updated_at': d.get('updated_at', ''),
-    }
-
-
-def save_quiet(state: dict) -> None:
-    """Atomically write ~/.pogo/quiet.json with all schema keys populated."""
-    QUIET_FILE.parent.mkdir(parents=True, exist_ok=True)
-    out = {
-        'enabled': bool(state.get('enabled', False)),
-        'start': state.get('start') or QUIET_DEFAULTS['start'],
-        'end': state.get('end') or QUIET_DEFAULTS['end'],
-        'updated_at': datetime.datetime.now().astimezone().isoformat(timespec='seconds'),
-    }
-    tmp = QUIET_FILE.parent / (QUIET_FILE.name + '.tmp')
-    tmp.write_text(json.dumps(out, indent=2) + '\n')
-    os.replace(tmp, QUIET_FILE)
 
 
 PREAPPROVAL_DEFAULTS = {'enabled': False, 'fast': False}
@@ -3364,33 +3323,6 @@ def _dispatch_command(text: str) -> str | list[str]:
             return f"✓ critical bug filed (routed to mayor):\n```\n{out.strip()}\n```"
         return f"✓ bug filed:\n```\n{out.strip()}\n```"
 
-    if low == 'quiet' or low.startswith('quiet '):
-        rest = text.split()[1:]
-        if not rest or (len(rest) == 1 and rest[0].lower() == 'status'):
-            state = load_quiet()
-            if state['enabled']:
-                return f"🌙 quiet hours: enabled, {state['start']}–{state['end']} (local)."
-            return f"quiet hours: disabled. (window {state['start']}–{state['end']})"
-        if len(rest) == 2 and TIME_RE.match(rest[0]) and TIME_RE.match(rest[1]):
-            return "Usage: `/quiet <true|false> [HH:MM HH:MM]`"
-        flag = rest[0].lower()
-        if flag not in ('true', 'false'):
-            return "Usage: `/quiet <true|false> [HH:MM HH:MM]`"
-        state = load_quiet()
-        times = rest[1:]
-        if times:
-            if len(times) != 2 or not TIME_RE.match(times[0]) or not TIME_RE.match(times[1]):
-                return "Usage: `/quiet <true|false> [HH:MM HH:MM]` (times must match HH:MM)"
-            state['start'] = times[0]
-            state['end'] = times[1]
-        if flag == 'true':
-            state['enabled'] = True
-            save_quiet(state)
-            return f"✓ quiet hours: enabled, {state['start']}–{state['end']} (local)."
-        state['enabled'] = False
-        save_quiet(state)
-        return f"✓ quiet hours: disabled. (window {state['start']}–{state['end']} preserved for next enable)"
-
     if low == 'preapprove' or low.startswith('preapprove '):
         rest = [t.lower() for t in text.split()[1:]]
         if not rest:
@@ -3781,19 +3713,6 @@ def _register_slash_commands(tree) -> None:
     @tree.command(name='restart', description='git pull + restart bridget')
     async def cmd_restart(interaction):
         await _run_slash(interaction, 'restart')
-
-    @tree.command(name='quiet', description='Toggle agent quiet hours')
-    @discord.app_commands.describe(
-        flag='true or false (omit to show current)',
-        window='Optional "HH:MM HH:MM" override',
-    )
-    async def cmd_quiet(interaction, flag: Optional[str] = None, window: Optional[str] = None):
-        parts = ['quiet']
-        if flag:
-            parts.append(flag)
-        if window:
-            parts.append(window)
-        await _run_slash(interaction, ' '.join(parts))
 
     @tree.command(name='preapprove', description='Toggle architect + mayor pre-approval')
     @discord.app_commands.describe(mode='`true`, `true fast`, or `false`; omit to show current')

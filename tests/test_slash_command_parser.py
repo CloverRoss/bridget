@@ -64,7 +64,7 @@ def bridget(tmp_path, monkeypatch):
     'read m3', 'open mg-abcd', 'mail subject',
     'dismiss mg-abcd', 'dismiss all',
     'status', 'inbox', 'agents', 'agent list', 'crew',
-    'nudge mayor', 'restart', 'quiet', 'preapprove true',
+    'nudge mayor', 'restart', 'preapprove true',
     'help', 'help approve', '?', 'commands',
     'librarian sync FOO', 'librarian search needle',
     'accountant run-now', 'accountant status', 'spend',
