@@ -55,7 +55,7 @@ def bridget(tmp_path, monkeypatch):
 
 
 def _write_mail(mail_dir: Path, name: str, subject: str,
-                sender: str = 'architect', body: str = 'body text') -> Path:
+                sender: str = 'designer', body: str = 'body text') -> Path:
     mail_dir.mkdir(parents=True, exist_ok=True)
     p = mail_dir / name
     p.write_text(f"From: {sender}\nSubject: {subject}\n\n{body}\n")
@@ -73,13 +73,13 @@ def _seed_three(bridget):
     m2 = _write_mail(
         bridget.MAIL_DIR, '02-m2.txt',
         subject='FYI: heads-up',
-        sender='architect',
+        sender='designer',
         body='no work-item id mentioned here',
     )
     m3 = _write_mail(
         bridget.MAIL_DIR, '03-m3.txt',
         subject='approval needed mg-zzzz',
-        sender='architect',
+        sender='designer',
         body='please approve mg-zzzz',
     )
     return m1, m2, m3

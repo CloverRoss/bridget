@@ -64,8 +64,8 @@ def test_format_chat_dm_includes_agent_and_body(bridget):
 def test_format_chat_dm_strips_trailing_whitespace(bridget):
     # parse_mail leaves a trailing \n from the maildir entry. The DM
     # shouldn't render with a dangling blank line.
-    assert bridget.format_chat_dm('architect', 'done\n') == (
-        '[From architect]: done'
+    assert bridget.format_chat_dm('designer', 'done\n') == (
+        '[From designer]: done'
     )
 
 
@@ -186,7 +186,7 @@ def test_script_chat_subcommand_writes_file(tmp_path):
     env['POGO_BRIDGET_CHAT_DIR'] = str(chat_dir)
     # No bridget.env in HOME — load_config would die() if reached.
     r = subprocess.run(
-        [sys.executable, str(SCRIPT), 'chat', 'architect', 'short', 'msg'],
+        [sys.executable, str(SCRIPT), 'chat', 'designer', 'short', 'msg'],
         env=env, capture_output=True, text=True, timeout=10,
     )
     assert r.returncode == 0, (
@@ -195,7 +195,7 @@ def test_script_chat_subcommand_writes_file(tmp_path):
     files = list((chat_dir / 'new').iterdir())
     assert len(files) == 1
     content = files[0].read_text()
-    assert 'From: architect\n' in content
+    assert 'From: designer\n' in content
     assert content.endswith('\n\nshort msg\n')
 
 
@@ -325,7 +325,7 @@ def test_watch_chat_long_body_splits_into_chunked_dms(bridget):
     # 10 paragraphs × ~310 chars = ~3100 chars, well over 1800.
     body = '\n\n'.join(f'paragraph {i}: ' + 'x' * 300 for i in range(10))
     assert len(body) > bridget.DM_CHUNK_SIZE  # guard the premise
-    bridget.write_chat_drop('architect', body, inbox_dir=inbox)
+    bridget.write_chat_drop('designer', body, inbox_dir=inbox)
 
     user = MagicMock()
     user.send = AsyncMock()
@@ -346,9 +346,9 @@ def test_watch_chat_long_body_splits_into_chunked_dms(bridget):
         f'expected >=2 DMs for {len(body)}-char chat body, got '
         f'{user.send.await_count}'
     )
-    # First DM carries the [From architect]: prefix.
+    # First DM carries the [From designer]: prefix.
     sent_texts = [c.args[0] for c in user.send.call_args_list]
-    assert sent_texts[0].startswith('[From architect]: ')
+    assert sent_texts[0].startswith('[From designer]: ')
 
 
 def test_watch_chat_processes_files_in_sorted_order(bridget):

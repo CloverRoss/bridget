@@ -134,7 +134,7 @@ def test_read_mg_id_returns_hint(bridget, monkeypatch):
     monkeypatch.setattr(bridget, 'find_mails_for', lambda _id: [
         (
             Path('/tmp/fake'),
-            {'from': 'architect', 'subject': 'approval needed: mg-1234', 'body': 'b'},
+            {'from': 'designer', 'subject': 'approval needed: mg-1234', 'body': 'b'},
             'cur',
         ),
     ])

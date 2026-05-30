@@ -2,7 +2,7 @@
 
 Covers:
 - /route with no arg reports the current target + valid-agents list.
-- /route <agent> for each crew agent (mayor / director / architect / doctor)
+- /route <agent> for each crew agent (mayor / director / designer / doctor)
   sets the persisted target and replies with the confirmation line.
 - The slash form (`/route ...`) and the back-compat un-prefixed form
   (`route ...`) both reach the same handler.
@@ -82,7 +82,7 @@ def test_load_route_default_when_not_a_dict(bridget):
     assert bridget.load_route() == 'mayor'
 
 
-@pytest.mark.parametrize('agent', ['mayor', 'director', 'architect', 'doctor'])
+@pytest.mark.parametrize('agent', ['mayor', 'director', 'designer', 'doctor'])
 def test_save_route_then_load_round_trip(bridget, agent):
     bridget.save_route(agent)
     assert bridget.load_route() == agent
@@ -99,7 +99,7 @@ def test_route_no_arg_shows_default(bridget):
     reply = bridget.handle_command('/route')
     assert 'mayor' in reply
     # Lists every valid agent so the user knows the menu.
-    for agent in ('mayor', 'director', 'architect', 'doctor'):
+    for agent in ('mayor', 'director', 'designer', 'doctor'):
         assert agent in reply
     assert '/route <agent>' in reply
 
@@ -116,7 +116,7 @@ def test_route_no_arg_shows_current_after_set(bridget):
 
 # -- handle_command(/route <agent>) -----------------------------------------
 
-@pytest.mark.parametrize('agent', ['mayor', 'director', 'architect', 'doctor'])
+@pytest.mark.parametrize('agent', ['mayor', 'director', 'designer', 'doctor'])
 def test_route_sets_each_crew_agent(bridget, agent):
     reply = bridget.handle_command(f'/route {agent}')
     assert '✓' in reply
@@ -142,9 +142,9 @@ def test_route_strips_surrounding_whitespace(bridget):
 def test_route_unprefixed_back_compat_still_works(bridget):
     # mg-a0f3 keeps the un-slashed verbs working for one release with a
     # stderr deprecation log; verify /route honors that path too.
-    reply = bridget.handle_command('route architect')
+    reply = bridget.handle_command('route designer')
     assert '✓' in reply
-    assert bridget.load_route() == 'architect'
+    assert bridget.load_route() == 'designer'
 
 
 # -- invalid agent ----------------------------------------------------------
@@ -155,7 +155,7 @@ def test_route_unknown_agent_rejected(bridget, bad):
     assert 'Unknown agent' in reply
     assert bad in reply
     # All valid agents enumerated for the user to retry from.
-    for agent in ('mayor', 'director', 'architect', 'doctor'):
+    for agent in ('mayor', 'director', 'designer', 'doctor'):
         assert agent in reply
     # Sidecar untouched — still default.
     assert not bridget.ROUTE_FILE.exists()
@@ -173,21 +173,21 @@ def test_route_unknown_agent_does_not_overwrite_existing(bridget):
 # -- persistence across "restart" ------------------------------------------
 
 def test_route_persists_across_restart(tmp_path, monkeypatch):
-    # First import: set route to architect.
+    # First import: set route to designer.
     monkeypatch.setenv('HOME', str(tmp_path))
     mod1 = _load_bridget(tmp_path)
-    mod1.handle_command('/route architect')
-    assert mod1.load_route() == 'architect'
+    mod1.handle_command('/route designer')
+    assert mod1.load_route() == 'designer'
 
     # Drop the cached module so we can reload bridget as a fresh process
     # would, then re-import against the same HOME.
     sys.modules.pop('bridget', None)
     mod2 = _load_bridget(tmp_path)
-    # Same HOME → same sidecar → architect survives.
+    # Same HOME → same sidecar → designer survives.
     assert mod2.ROUTE_FILE == mod1.ROUTE_FILE
-    assert mod2.load_route() == 'architect'
+    assert mod2.load_route() == 'designer'
     reply = mod2.handle_command('/route')
-    assert '**architect**' in reply
+    assert '**designer**' in reply
 
 
 # -- COMMANDS / verbs surface checks ---------------------------------------

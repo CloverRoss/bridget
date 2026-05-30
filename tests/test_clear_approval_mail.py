@@ -42,7 +42,7 @@ def bridget(tmp_path, monkeypatch):
 
 
 def _write_mail(mail_dir: Path, name: str, subject: str, body: str = 'body text',
-                sender: str = 'architect') -> Path:
+                sender: str = 'designer') -> Path:
     mail_dir.mkdir(parents=True, exist_ok=True)
     p = mail_dir / name
     p.write_text(f"From: {sender}\nSubject: {subject}\n\n{body}\n")
@@ -124,7 +124,7 @@ def test_clear_approval_mail_tolerates_unreadable_file(bridget):
 
 def _fake_mg_idea(args):
     if args[:1] == ['show']:
-        return 0, 'ID: mg-aaaa\nType: idea\nAssignee: architect\nStatus: available\n', ''
+        return 0, 'ID: mg-aaaa\nType: idea\nAssignee: designer\nStatus: available\n', ''
     if args[:2] == ['mail', 'send']:
         return 0, '', ''
     if args[:1] == ['unshelve']:

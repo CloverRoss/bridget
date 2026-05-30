@@ -47,7 +47,7 @@ def bridget(tmp_path, monkeypatch):
     monkeypatch.setattr(mod, 'mark_mail_read', lambda **_k: 0)
     monkeypatch.setattr(mod, '_clear_approval_mail', lambda _id: 0)
     monkeypatch.setattr(mod, 'log_mail_action', lambda *_a, **_k: None)
-    monkeypatch.setattr(mod, 'route_recipient', lambda _id: 'architect')
+    monkeypatch.setattr(mod, 'route_recipient', lambda _id: 'designer')
     return mod
 
 

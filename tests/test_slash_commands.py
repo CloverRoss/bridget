@@ -274,7 +274,7 @@ def test_text_slash_approve_still_dispatches(bridget, monkeypatch):
     monkeypatch.setattr(bridget, 'mark_mail_read', lambda **_k: 0)
     monkeypatch.setattr(bridget, '_clear_approval_mail', lambda _id: 0)
     monkeypatch.setattr(bridget, 'log_mail_action', lambda *_a, **_k: None)
-    monkeypatch.setattr(bridget, 'route_recipient', lambda _id: 'architect')
+    monkeypatch.setattr(bridget, 'route_recipient', lambda _id: 'designer')
     reply = bridget.handle_command('/approve mg-abcd')
     assert '✓ approve sent' in reply
 
@@ -286,7 +286,7 @@ def test_text_legacy_unprefixed_command_still_works(bridget, monkeypatch):
     monkeypatch.setattr(bridget, 'mark_mail_read', lambda **_k: 0)
     monkeypatch.setattr(bridget, '_clear_approval_mail', lambda _id: 0)
     monkeypatch.setattr(bridget, 'log_mail_action', lambda *_a, **_k: None)
-    monkeypatch.setattr(bridget, 'route_recipient', lambda _id: 'architect')
+    monkeypatch.setattr(bridget, 'route_recipient', lambda _id: 'designer')
     reply = bridget.handle_command('approve mg-abcd')
     assert '✓ approve sent' in reply
 

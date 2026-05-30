@@ -68,7 +68,7 @@ MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 # per-user keying like Robin's state.json. Missing/corrupt → DEFAULT_ROUTE
 # (mayor) on lookup so a fresh install just works.
 ROUTE_FILE = HOME / '.pogo' / 'bridget-route.json'
-ROUTE_VALID_AGENTS = ('mayor', 'director', 'architect', 'doctor')
+ROUTE_VALID_AGENTS = ('mayor', 'designer', 'doctor')
 DEFAULT_ROUTE = 'mayor'
 # Chat-relay buffer (mg-c869 — Robin port item 1). Non-slash DMs are
 # appended here keyed by the recipient agent (from /route); the recipient
@@ -189,7 +189,7 @@ COMMANDS = [
     {
         'name': 'explain',
         'signature': '/explain mg-XXXX <what> (or dr-XXXX)',
-        'description': 'ask architect to elaborate without redesigning',
+        'description': 'ask designer to elaborate without redesigning',
     },
     {
         'name': 'read',
@@ -199,7 +199,7 @@ COMMANDS = [
     {
         'name': 'open',
         'signature': '/open mg-XXXX',
-        'description': 'return a Notes-app pointer for a design (use `/read` for mail message-ids). reply is `Notes app → Pogo Designs → <id>: <title>`; the architect publishes each design to the Notes folder on save. if mg show fails (unknown id) replies `open: mg item mg-XXXX not found`. forward-only: designs filed before this change land are not in Notes.',
+        'description': 'return a Notes-app pointer for a design (use `/read` for mail message-ids). reply is `Notes app → Pogo Designs → <id>: <title>`; the designer publishes each design to the Notes folder on save. if mg show fails (unknown id) replies `open: mg item mg-XXXX not found`. forward-only: designs filed before this change land are not in Notes.',
     },
     {
         'name': 'mail',
@@ -241,7 +241,7 @@ COMMANDS = [
         'signature': '/route [<agent>]',
         'description': (
             'set or show the crew agent that non-slash DMs target. '
-            'valid agents: mayor / director / architect / doctor. '
+            'valid agents: mayor / designer / doctor. '
             'default is mayor; selection persists across bridget '
             'restart via `~/.pogo/bridget-route.json`. with no argument '
             'shows the current route + valid agents list. (mg-6b2b)'
@@ -1159,7 +1159,7 @@ _TRANSITION_FORMATS = {
     'done': '✅ done {id}: {title}',
     'shelved': '📦 shelved {id}: {title}',
 }
-_NON_POLECAT_ASSIGNEES = {'architect', 'mayor', 'human', ''}
+_NON_POLECAT_ASSIGNEES = {'designer', 'mayor', 'human', ''}
 
 
 def format_transition(task: dict, new_status: str):
@@ -1298,7 +1298,7 @@ async def watch_idea_claims(user: discord.User):
                 primed = True
             else:
                 for iid in sorted(new_ids):
-                    msg = f'🧠 architect claimed {iid}: {titles.get(iid, "?")}'
+                    msg = f'🧠 designer claimed {iid}: {titles.get(iid, "?")}'
                     try:
                         await send_dm_chunked(user, msg)
                     except discord.HTTPException as e:
@@ -1526,18 +1526,18 @@ def route_recipient(mg_id: str) -> str:
     if rc != 0:
         print(
             f'route_recipient: mg show {mg_id} failed (rc={rc}); '
-            f'falling back to architect. err={err.strip()[:200]}',
+            f'falling back to designer. err={err.strip()[:200]}',
             file=sys.stderr,
         )
-        return 'architect'
+        return 'designer'
     m = re.search(r'^Assignee:\s+(\S+)', out, re.MULTILINE)
     if not m:
         print(
             f'route_recipient: no Assignee: line in mg show {mg_id}; '
-            f'falling back to architect.',
+            f'falling back to designer.',
             file=sys.stderr,
         )
-        return 'architect'
+        return 'designer'
     return m.group(1).strip()
 
 
@@ -1854,7 +1854,7 @@ def find_mails_for(mg_id: str) -> list:
 # Add new prefixes here as more action-required workflows ship.
 PROTECTED_SUBJECT_PREFIXES = (
     'Report ready:',     # director → human, awaiting approve/reject/revise
-    'approval needed',   # architect → human, awaiting approve/reject/revise
+    'approval needed',   # designer → human, awaiting approve/reject/revise
 )
 
 
@@ -3033,7 +3033,7 @@ def _register_slash_commands(tree) -> None:
     tree is uploaded to Discord by tree.sync() in on_ready."""
 
     @tree.command(name='route', description='Set/show the crew agent that non-slash DMs target')
-    @discord.app_commands.describe(agent='mayor / director / architect / doctor; omit to show current')
+    @discord.app_commands.describe(agent='mayor / designer / doctor; omit to show current')
     async def cmd_route(interaction, agent: Optional[str] = None):
         text = 'route'
         if agent:

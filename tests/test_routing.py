@@ -2,7 +2,7 @@
 
 Covers:
 - route_recipient() unit tests (mg show failure, missing Assignee line, assignee values).
-- approve/reject/revise/explain × architect/director/mayor × mg-/dr- prefixes —
+- approve/reject/revise/explain × designer/director/mayor × mg-/dr- prefixes —
   verifies the mail send target is the mg item's Assignee.
 - read/dismiss accept the dr- prefix (no routing logic, just prefix relaxation).
 """
@@ -42,21 +42,21 @@ def bridget(tmp_path, monkeypatch):
 
 # -- route_recipient unit tests ---------------------------------------------
 
-def test_route_recipient_mg_show_failure_falls_back_to_architect(bridget, monkeypatch, capsys):
+def test_route_recipient_mg_show_failure_falls_back_to_designer(bridget, monkeypatch, capsys):
     def fake_run_mg(args):
         return 1, '', 'no such item'
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-deadbeef') == 'architect'
+    assert bridget.route_recipient('mg-deadbeef') == 'designer'
     err = capsys.readouterr().err
     assert 'route_recipient' in err
     assert 'mg-deadbeef' in err
 
 
-def test_route_recipient_no_assignee_line_falls_back_to_architect(bridget, monkeypatch, capsys):
+def test_route_recipient_no_assignee_line_falls_back_to_designer(bridget, monkeypatch, capsys):
     def fake_run_mg(args):
         return 0, 'ID: mg-1234\nTitle: something\nStatus: available\n', ''
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1234') == 'architect'
+    assert bridget.route_recipient('mg-1234') == 'designer'
     err = capsys.readouterr().err
     assert 'no Assignee:' in err
 
@@ -69,12 +69,12 @@ def test_route_recipient_assignee_director_routes_to_director(bridget, monkeypat
     assert bridget.route_recipient('mg-1') == 'director'
 
 
-def test_route_recipient_assignee_architect_routes_to_architect(bridget, monkeypatch):
-    # Type=idea assigned to architect → architect.
+def test_route_recipient_assignee_designer_routes_to_designer(bridget, monkeypatch):
+    # Type=idea assigned to designer → designer.
     def fake_run_mg(args):
-        return 0, 'ID: mg-1\nType: idea\nAssignee: architect\nStatus: available\n', ''
+        return 0, 'ID: mg-1\nType: idea\nAssignee: designer\nStatus: available\n', ''
     monkeypatch.setattr(bridget, 'run_mg', fake_run_mg)
-    assert bridget.route_recipient('mg-1') == 'architect'
+    assert bridget.route_recipient('mg-1') == 'designer'
 
 
 def test_route_recipient_assignee_mayor_routes_to_mayor(bridget, monkeypatch):
@@ -141,7 +141,7 @@ class FakeMg:
     ('explain', ' the part about X'),
 ])
 @pytest.mark.parametrize('assignee,expected_target', [
-    ('architect', 'architect'),
+    ('designer', 'designer'),
     ('director', 'director'),
     ('mayor', 'mayor'),
 ])

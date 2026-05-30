@@ -3,7 +3,7 @@
 Post-mg-10e2 the `open` verb no longer reads iCloud-stored design docs. It
 returns a Notes-app pointer of the form
 `Notes app → Pogo Designs → **<id>: <title>**` so the user can locate the
-note the architect publishes on each design save (closes the macOS TCC
+note the designer publishes on each design save (closes the macOS TCC
 blocker for `~/Library/Mobile Documents` and the Discord DM truncation
 issue). Title is sourced from `mg show <id>`; if mg show fails the reply
 is `open: mg item <id> not found`.

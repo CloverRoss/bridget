@@ -53,7 +53,7 @@ def bridget(tmp_path, monkeypatch):
 
 
 def _write_mail(mail_dir: Path, name: str, subject: str,
-                sender: str = 'architect', body: str = 'body text') -> Path:
+                sender: str = 'designer', body: str = 'body text') -> Path:
     mail_dir.mkdir(parents=True, exist_ok=True)
     p = mail_dir / name
     p.write_text(f"From: {sender}\nSubject: {subject}\n\n{body}\n")
@@ -139,7 +139,7 @@ def test_read_protected_mail_on_cur_renders_read_state(bridget, monkeypatch):
     monkeypatch.setattr(bridget, 'find_mails_for', lambda _id: [
         (
             Path('/tmp/fake'),
-            {'from': 'architect', 'subject': 'approval needed dr-eeee', 'body': 'b'},
+            {'from': 'designer', 'subject': 'approval needed dr-eeee', 'body': 'b'},
             'cur',
         ),
     ])

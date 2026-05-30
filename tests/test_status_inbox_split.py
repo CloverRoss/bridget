@@ -259,12 +259,12 @@ def test_status_does_not_include_mail_or_approvals(bridget, monkeypatch):
 # -- get_inbox_summary ------------------------------------------------------
 
 def test_inbox_shows_mail_count_and_listing(bridget, monkeypatch):
-    _write_mail(bridget.MAIL_DIR, '01.eml', 'hello from architect mg-1111',
-                sender='architect')
+    _write_mail(bridget.MAIL_DIR, '01.eml', 'hello from designer mg-1111',
+                sender='designer')
     monkeypatch.setattr(bridget, 'run_mg', lambda args: (0, '', ''))
     summary = bridget.get_inbox_summary()
     assert 'Unread mail to human: **1**' in summary
-    assert 'architect' in summary
+    assert 'designer' in summary
 
 
 def test_inbox_shows_approvals_and_reports(bridget, monkeypatch):
