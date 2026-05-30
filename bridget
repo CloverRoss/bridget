@@ -59,7 +59,6 @@ def _log(msg: str) -> None:
 HOME = Path.home()
 ENV_FILE = HOME / '.pogo' / 'bridget.env'
 SEEN_FILE = HOME / '.pogo' / 'bridget.seen'
-PREAPPROVAL_FILE = HOME / '.pogo' / 'preapproval.json'
 TASK_STATES_FILE = HOME / '.pogo' / 'bridget.task-states.json'
 IDEA_CLAIMS_FILE = HOME / '.pogo' / 'bridget.idea-claims.json'
 MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
@@ -193,17 +192,6 @@ COMMANDS = [
         'description': 'ask architect to elaborate without redesigning',
     },
     {
-        'name': 'kickoff',
-        'signature': '/kickoff pj-XXXX',
-        'description': (
-            'flip a Project from ready-for-kickoff to in-progress (mayor handles). '
-            'Restricted to the pj- prefix (projects only) — legacy mg- projects must '
-            'be edited manually via `mg edit mg-XXXX --add-tags=in-progress`. Routes '
-            'as a verb-mail to the mayor; the mayor processes it asynchronously and '
-            'mails you back when the transition is done. (ds-1482)'
-        ),
-    },
-    {
         'name': 'read',
         'signature': '/read m<N> (or dr-XXXX)',
         'description': 'show a mail. `mN` indices come from the most recent `/inbox` output and may shift if new mail arrives in between. for designs awaiting approval, use `/open mg-XXXX` instead — `/read mg-XXXX` only returns a hint. (approval/Report mails stay unread until you reply with /approve / /reject / /revise / /explain)',
@@ -212,16 +200,6 @@ COMMANDS = [
         'name': 'open',
         'signature': '/open mg-XXXX',
         'description': 'return a Notes-app pointer for a design (use `/read` for mail message-ids). reply is `Notes app → Pogo Designs → <id>: <title>`; the architect publishes each design to the Notes folder on save. if mg show fails (unknown id) replies `open: mg item mg-XXXX not found`. forward-only: designs filed before this change land are not in Notes.',
-    },
-    {
-        'name': 'idea:',
-        'signature': '/idea: [tag] [tag] ... <text>',
-        'description': 'file an idea with optional scope tags (e.g. `[bridget]`)',
-    },
-    {
-        'name': 'bug:',
-        'signature': '/bug: [tag] [tag] ... <text>',
-        'description': "file a bug with optional scope tags. Use `[critical]` for crash-class bugs that should skip architect's design phase — routes directly to mayor. (existing software is broken — not a new feature.)",
     },
     {
         'name': 'mail',
@@ -257,11 +235,6 @@ COMMANDS = [
         'name': 'restart',
         'signature': '/restart',
         'description': 'git pull + restart bridget (after merging a PR)',
-    },
-    {
-        'name': 'preapprove',
-        'signature': '/preapprove [true [fast] | false]',
-        'description': 'toggle architect + mayor pre-approval. `true`: skip approval/holdoff mails for designs with no open questions. `true fast`: also auto-resolve open questions with the recommendation. `false`: standard mail-approval flow.',
     },
     {
         'name': 'route',
@@ -374,10 +347,10 @@ COMMANDS_BY_NAME = {c['name']: c for c in COMMANDS}
 # stderr deprecation warning per invocation. Dropped in a follow-up once
 # the chat-relay cutover has bedded in.
 COMMAND_VERBS = frozenset({
-    'approve', 'reject', 'revise', 'explain', 'kickoff',
+    'approve', 'reject', 'revise', 'explain',
     'read', 'open', 'mail', 'dismiss',
     'nudge', 'restart', 'help', '?', 'commands',
-    'preapprove', 'spend',
+    'spend',
     'librarian', 'accountant',
     'inbox', 'status',
     'route',
@@ -385,7 +358,7 @@ COMMAND_VERBS = frozenset({
 # `idea:` and `bug:` carry the colon as part of the verb (no whitespace
 # between verb and payload is required), so they need prefix matching
 # rather than first-token equality.
-COMMAND_VERB_PREFIXES = ('idea:', 'bug:')
+COMMAND_VERB_PREFIXES = ()
 # Reply for empty / whitespace-only DMs: nothing to buffer, so point the
 # user at /help instead of silently swallowing the message.
 CHAT_RELAY_EMPTY_REPLY = (
@@ -1076,36 +1049,7 @@ def save_seen(seen: set) -> None:
     SEEN_FILE.write_text('\n'.join(sorted(seen)))
 
 
-PREAPPROVAL_DEFAULTS = {'enabled': False, 'fast': False}
 
-
-def load_preapproval() -> dict:
-    """Read ~/.pogo/preapproval.json. Missing/unreadable file → defaults."""
-    if not PREAPPROVAL_FILE.exists():
-        return {**PREAPPROVAL_DEFAULTS, 'updated_at': ''}
-    try:
-        d = json.loads(PREAPPROVAL_FILE.read_text())
-    except Exception as e:
-        print(f'load_preapproval parse error: {e}', file=sys.stderr)
-        return {**PREAPPROVAL_DEFAULTS, 'updated_at': ''}
-    return {
-        'enabled': bool(d.get('enabled', False)),
-        'fast': bool(d.get('fast', False)),
-        'updated_at': d.get('updated_at', ''),
-    }
-
-
-def save_preapproval(state: dict) -> None:
-    """Atomically write ~/.pogo/preapproval.json with all schema keys populated."""
-    PREAPPROVAL_FILE.parent.mkdir(parents=True, exist_ok=True)
-    out = {
-        'enabled': bool(state.get('enabled', False)),
-        'fast': bool(state.get('fast', False)),
-        'updated_at': datetime.datetime.now(datetime.timezone.utc).isoformat(timespec='seconds').replace('+00:00', 'Z'),
-    }
-    tmp = PREAPPROVAL_FILE.parent / (PREAPPROVAL_FILE.name + '.tmp')
-    tmp.write_text(json.dumps(out, indent=2) + '\n')
-    os.replace(tmp, PREAPPROVAL_FILE)
 
 
 def load_route() -> str:
@@ -2562,24 +2506,6 @@ def _dispatch_command(text: str) -> str | list[str]:
             return f"✓ reject sent: `{mg_id}`{tail}"
         return f"✗ failed: {err or out}"
 
-    if low == 'kickoff' or low.startswith('kickoff '):
-        parts = text.split(None, 1)
-        if len(parts) < 2:
-            return 'Usage: `/kickoff pj-XXXX`'
-        pj_id = parts[1].strip().lower()
-        if not re.match(r'^pj-[0-9a-f]+$', pj_id):
-            return 'kickoff is restricted to pj- prefix (projects only)'
-        rc, out, err = run_mg([
-            'mail', 'send', 'mayor',
-            '--from=human',
-            f'--subject=kickoff {pj_id}',
-            '--body=kickoff requested via discord',
-        ])
-        if rc == 0:
-            log_mail_action('kickoff', mg_id=pj_id)
-            return f"✓ kickoff sent: `{pj_id}`"
-        return f"✗ failed: {err or out}"
-
     if re.match(r'^revise [a-z]+-', low):
         parts = text.split(None, 2)
         if len(parts) < 3:
@@ -2826,96 +2752,6 @@ def _dispatch_command(text: str) -> str | list[str]:
         if not c:
             return f"Unknown command `{name}`; type `/help` for the menu."
         return f"**`{c['signature']}`**\n\n{c['description']}"
-
-    if low.startswith('idea:'):
-        body = text[5:].strip()
-        if not body:
-            return "Usage: `/idea: [optional-tag] [optional-tag] ... <description>`"
-        extra_tags = []
-        while True:
-            m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
-            if not m:
-                break
-            extra_tags.append(m.group(1).strip())
-            body = m.group(2).strip()
-        if not body:
-            return "Usage: `/idea: [optional-tag] [optional-tag] ... <description>`"
-        title = body.splitlines()[0][:60]
-        args = [
-            'new', '--type=idea',
-            f'--title={title}',
-            f'--body={body}',
-            '--assignee=architect',
-            '--tag=pogo-inbox',
-            f'--repo={INBOX_REPO}',
-        ]
-        for t in extra_tags:
-            args.append(f'--tag={t}')
-        rc, out, err = run_mg(args)
-        return f"✓ idea filed:\n```\n{out.strip()}\n```" if rc == 0 else f"✗ failed: {err or out}"
-
-    if low.startswith('bug:'):
-        body = text[4:].strip()
-        if not body:
-            return "Usage: `/bug: [optional-tag] [optional-tag] ... <description>`"
-        extra_tags = []
-        while True:
-            m = re.match(r'^\[([^\]]+)\]\s*(.*)$', body, re.DOTALL)
-            if not m:
-                break
-            extra_tags.append(m.group(1).strip())
-            body = m.group(2).strip()
-        if not body:
-            return "Usage: `/bug: [optional-tag] [optional-tag] ... <description>`"
-        is_critical = any(t.lower() == 'critical' for t in extra_tags)
-        assignee = 'mayor' if is_critical else 'architect'
-        title = body.splitlines()[0][:60]
-        args = [
-            'new', '--type=bug',
-            f'--title={title}',
-            f'--body={body}',
-            f'--assignee={assignee}',
-            '--tag=pogo-inbox',
-            f'--repo={INBOX_REPO}',
-        ]
-        for t in extra_tags:
-            args.append(f'--tag={t}')
-        rc, out, err = run_mg(args)
-        if rc != 0:
-            return f"✗ failed: {err or out}"
-        if is_critical:
-            return f"✓ critical bug filed (routed to mayor):\n```\n{out.strip()}\n```"
-        return f"✓ bug filed:\n```\n{out.strip()}\n```"
-
-    if low == 'preapprove' or low.startswith('preapprove '):
-        rest = [t.lower() for t in text.split()[1:]]
-        if not rest:
-            state = load_preapproval()
-            if state['enabled']:
-                fast_word = 'on' if state.get('fast') else 'off'
-                toggle_cmd = 'preapprove true' if state.get('fast') else 'preapprove true fast'
-                toggle_target = 'off' if state.get('fast') else 'on'
-                return (f"pre-approval: currently enabled (fast: {fast_word}). "
-                        f"send 'preapprove false' to disable, or '{toggle_cmd}' to switch fast {toggle_target}.")
-            return "pre-approval: currently disabled. send 'preapprove true' to enable, or 'preapprove true fast' for fast mode."
-        usage = "Usage: `/preapprove [true [fast] | false]`"
-        if rest[0] not in ('true', 'false'):
-            return usage
-        if rest[0] == 'true':
-            if len(rest) == 1:
-                fast = False
-            elif len(rest) == 2 and rest[1] == 'fast':
-                fast = True
-            else:
-                return usage
-            save_preapproval({'enabled': True, 'fast': fast})
-            fast_word = 'on' if fast else 'off'
-            return f"✓ pre-approval: enabled (fast: {fast_word})."
-        # rest[0] == 'false'
-        if len(rest) != 1:
-            return usage
-        save_preapproval({'enabled': False, 'fast': False})
-        return "✓ pre-approval: disabled."
 
     if low == 'route' or low.startswith('route '):
         parts = text.split(None, 1)
@@ -3195,92 +3031,6 @@ def _register_slash_commands(tree) -> None:
 
     Called once at module load (after handle_command is defined); the
     tree is uploaded to Discord by tree.sync() in on_ready."""
-
-    @tree.command(name='approve', description='Approve a design')
-    @discord.app_commands.describe(target='Design id, e.g. mg-abcd')
-    async def cmd_approve(interaction, target: str):
-        await _run_slash(interaction, f'approve {target}')
-
-    @tree.command(name='reject', description='Reject a design with a reason')
-    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', reason='Reason for rejection')
-    async def cmd_reject(interaction, target: str, reason: str):
-        await _run_slash(interaction, f'reject {target} {reason}')
-
-    @tree.command(name='revise', description='Request changes to a design')
-    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', feedback='What to revise')
-    async def cmd_revise(interaction, target: str, feedback: str):
-        await _run_slash(interaction, f'revise {target} {feedback}')
-
-    @tree.command(name='explain', description='Ask architect to elaborate without redesigning')
-    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', what='What to explain')
-    async def cmd_explain(interaction, target: str, what: str):
-        await _run_slash(interaction, f'explain {target} {what}')
-
-    @tree.command(name='kickoff', description='Flip a Project from ready-for-kickoff to in-progress')
-    @discord.app_commands.describe(project='Project id, e.g. pj-abcd')
-    async def cmd_kickoff(interaction, project: str):
-        await _run_slash(interaction, f'kickoff {project}')
-
-    @tree.command(name='read', description='Read a mail by slot (e.g. m1) from latest /inbox')
-    @discord.app_commands.describe(slot='Mail slot, e.g. m1')
-    async def cmd_read(interaction, slot: str):
-        await _run_slash(interaction, f'read {slot}')
-
-    @tree.command(name='open', description='Open a design in Notes (returns the Notes-app pointer)')
-    @discord.app_commands.describe(target='Design id, e.g. mg-abcd')
-    async def cmd_open(interaction, target: str):
-        await _run_slash(interaction, f'open {target}')
-
-    @tree.command(name='idea', description='File an idea (optionally with [tags])')
-    @discord.app_commands.describe(text='Idea body (prefix `[tag] [tag] …` for scope tags)')
-    async def cmd_idea(interaction, text: str):
-        await _run_slash(interaction, f'idea: {text}')
-
-    @tree.command(name='bug', description='File a bug (optionally with [tags]; use [critical] for crash-class)')
-    @discord.app_commands.describe(text='Bug body (prefix `[tag] [tag] …` for scope tags)')
-    async def cmd_bug(interaction, text: str):
-        await _run_slash(interaction, f'bug: {text}')
-
-    @tree.command(name='mail', description='Send a mail (subject required; body optional)')
-    @discord.app_commands.describe(subject='Subject line', body='Optional body (multi-line OK)')
-    async def cmd_mail(interaction, subject: str, body: Optional[str] = None):
-        text = f'mail {subject}'
-        if body:
-            text = f'mail {subject}\n{body}'
-        await _run_slash(interaction, text)
-
-    @tree.command(name='dismiss', description='Mark mails about an id as read (or `all` to inbox-zero)')
-    @discord.app_commands.describe(target='mg-XXXX / dr-XXXX, or the literal `all`')
-    async def cmd_dismiss(interaction, target: str):
-        await _run_slash(interaction, f'dismiss {target}')
-
-    @tree.command(name='status', description='Work in flight, by type')
-    async def cmd_status(interaction):
-        await _run_slash(interaction, 'status')
-
-    @tree.command(name='inbox', description='Pending mail, approvals, and Reports awaiting reply')
-    async def cmd_inbox(interaction):
-        await _run_slash(interaction, 'inbox')
-
-    @tree.command(name='nudge', description='Wake a stalled agent')
-    @discord.app_commands.describe(agent='Agent name', reason='Optional reason')
-    async def cmd_nudge(interaction, agent: str, reason: Optional[str] = None):
-        text = f'nudge {agent}'
-        if reason:
-            text = f'nudge {agent} {reason}'
-        await _run_slash(interaction, text)
-
-    @tree.command(name='restart', description='git pull + restart bridget')
-    async def cmd_restart(interaction):
-        await _run_slash(interaction, 'restart')
-
-    @tree.command(name='preapprove', description='Toggle architect + mayor pre-approval')
-    @discord.app_commands.describe(mode='`true`, `true fast`, or `false`; omit to show current')
-    async def cmd_preapprove(interaction, mode: Optional[str] = None):
-        text = 'preapprove'
-        if mode:
-            text = f'preapprove {mode}'
-        await _run_slash(interaction, text)
 
     @tree.command(name='route', description='Set/show the crew agent that non-slash DMs target')
     @discord.app_commands.describe(agent='mayor / director / architect / doctor; omit to show current')

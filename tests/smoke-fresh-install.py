@@ -39,8 +39,6 @@ def main() -> int:
 
     cases = [
         'help', '?', 'commands',
-        'idea: smoke test',
-        'bug: smoke test',
         'read mg-deadbeef',
         'dismiss mg-deadbeef',
         'mail smoke subject\nsmoke body',

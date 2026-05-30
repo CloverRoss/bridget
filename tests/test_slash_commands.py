@@ -8,8 +8,7 @@ so Discord's slash UI surfaces the same set without duplicating logic.
 This file covers:
 - tree is a discord.app_commands.CommandTree on bridget's Client.
 - Every text verb in COMMANDS has a corresponding registered slash command.
-- Slash names with text-form colons (`idea:` / `bug:`) collapse to `/idea`
-  and `/bug`; multi-word verbs (`librarian sync`) use hyphenated names.
+- Multi-word text verbs (`librarian sync`) use hyphenated slash names.
 - _run_slash forwards into handle_command and gates non-configured users.
 - on_ready calls tree.sync() exactly once across reconnects.
 - Text-parser path is untouched (existing /approve etc. still resolves
@@ -73,11 +72,8 @@ _EXPECTED_SLASH_NAMES = {
     'reject': 'reject',
     'revise': 'revise',
     'explain': 'explain',
-    'kickoff': 'kickoff',
     'read': 'read',
     'open': 'open',
-    'idea:': 'idea',
-    'bug:': 'bug',
     'mail': 'mail',
     'dismiss': 'dismiss',
     'dismiss all': 'dismiss',  # `/dismiss all` is the same slash command as `/dismiss`
@@ -85,7 +81,6 @@ _EXPECTED_SLASH_NAMES = {
     'inbox': 'inbox',
     'nudge': 'nudge',
     'restart': 'restart',
-    'preapprove': 'preapprove',
     'route': 'route',
     'librarian sync': 'librarian-sync',
     'librarian search': 'librarian-search',
@@ -315,16 +310,6 @@ def test_slash_approve_invokes_handle_command_with_text_form(bridget, monkeypatc
     asyncio.run(cmd.callback(interaction, target='mg-abcd'))
     bridget.handle_command.assert_called_once_with('approve mg-abcd')
 
-
-def test_slash_idea_reinserts_colon(bridget, monkeypatch):
-    """`idea:` is the text-form verb; Discord names can't contain `:`,
-    so the wrapper is `/idea` but it must re-insert the colon when
-    forwarding so the existing dispatcher recognizes it."""
-    monkeypatch.setattr(bridget, 'handle_command', MagicMock(return_value='✓ idea filed'))
-    cmd = _find_command(bridget, 'idea')
-    interaction = _fake_interaction(bridget)
-    asyncio.run(cmd.callback(interaction, text='[bridget] refactor parser'))
-    bridget.handle_command.assert_called_once_with('idea: [bridget] refactor parser')
 
 
 def test_slash_librarian_sync_reconstructs_space_form(bridget, monkeypatch):

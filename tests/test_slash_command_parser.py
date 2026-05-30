@@ -10,8 +10,7 @@ Covers:
   (mg-c869) — full coverage lives in test_chat_relay_buffer; this file
   only verifies the parser dispatches to the relay rather than falling
   through to `Unrecognized`.
-- `_is_known_verb` recognizes every command verb (plus the colon-suffixed
-  `idea:` / `bug:` forms) and rejects freeform chat.
+- `_is_known_verb` recognizes every command verb and rejects freeform chat.
 """
 import importlib.util
 import os
@@ -60,11 +59,11 @@ def bridget(tmp_path, monkeypatch):
 
 @pytest.mark.parametrize('text', [
     'approve mg-abcd', 'reject mg-abcd why', 'revise mg-abcd tweak',
-    'explain mg-abcd huh', 'kickoff pj-abcd',
+    'explain mg-abcd huh',
     'read m3', 'open mg-abcd', 'mail subject',
     'dismiss mg-abcd', 'dismiss all',
     'status', 'inbox',
-    'nudge mayor', 'restart', 'preapprove true',
+    'nudge mayor', 'restart',
     'help', 'help approve', '?', 'commands',
     'librarian sync FOO', 'librarian search needle',
     'accountant run-now', 'accountant status', 'spend',
@@ -72,10 +71,6 @@ def bridget(tmp_path, monkeypatch):
 def test_is_known_verb_recognizes_all_command_verbs(bridget, text):
     assert bridget._is_known_verb(text)
 
-
-@pytest.mark.parametrize('text', ['idea: something', 'bug: broken'])
-def test_is_known_verb_recognizes_colon_prefixed_verbs(bridget, text):
-    assert bridget._is_known_verb(text)
 
 
 @pytest.mark.parametrize('text', [
@@ -123,11 +118,6 @@ def test_slash_status_dispatches(bridget, monkeypatch):
     reply = bridget.handle_command('/status')
     assert 'STATUS_OK' in reply
 
-
-def test_slash_idea_filed(bridget, monkeypatch):
-    monkeypatch.setattr(bridget, 'run_mg', lambda _args: (0, 'mg-new', ''))
-    reply = bridget.handle_command('/idea: refactor the parser')
-    assert '✓ idea filed' in reply
 
 
 # -- handle_command: non-slash, non-verb → live chat-relay (mg-c869) -------
