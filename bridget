@@ -3032,6 +3032,69 @@ def _register_slash_commands(tree) -> None:
     Called once at module load (after handle_command is defined); the
     tree is uploaded to Discord by tree.sync() in on_ready."""
 
+    @tree.command(name='approve', description='Approve a design')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd')
+    async def cmd_approve(interaction, target: str):
+        await _run_slash(interaction, f'approve {target}')
+
+    @tree.command(name='reject', description='Reject a design with a reason')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', reason='Reason for rejection')
+    async def cmd_reject(interaction, target: str, reason: str):
+        await _run_slash(interaction, f'reject {target} {reason}')
+
+    @tree.command(name='revise', description='Request changes to a design')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', feedback='What to revise')
+    async def cmd_revise(interaction, target: str, feedback: str):
+        await _run_slash(interaction, f'revise {target} {feedback}')
+
+    @tree.command(name='explain', description='Ask designer to elaborate without redesigning')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd', what='What to explain')
+    async def cmd_explain(interaction, target: str, what: str):
+        await _run_slash(interaction, f'explain {target} {what}')
+
+    @tree.command(name='read', description='Read a mail by slot (e.g. m1) from latest /inbox')
+    @discord.app_commands.describe(slot='Mail slot, e.g. m1')
+    async def cmd_read(interaction, slot: str):
+        await _run_slash(interaction, f'read {slot}')
+
+    @tree.command(name='open', description='Open a design in Notes (returns the Notes-app pointer)')
+    @discord.app_commands.describe(target='Design id, e.g. mg-abcd')
+    async def cmd_open(interaction, target: str):
+        await _run_slash(interaction, f'open {target}')
+
+    @tree.command(name='mail', description='Send a mail (subject required; body optional)')
+    @discord.app_commands.describe(subject='Subject line', body='Optional body (multi-line OK)')
+    async def cmd_mail(interaction, subject: str, body=None):
+        text = f'mail {subject}'
+        if body:
+            text = f'mail {subject}\n{body}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='dismiss', description='Mark mails about an id as read (or `all` to inbox-zero)')
+    @discord.app_commands.describe(target='mg-XXXX / dr-XXXX, or the literal `all`')
+    async def cmd_dismiss(interaction, target: str):
+        await _run_slash(interaction, f'dismiss {target}')
+
+    @tree.command(name='status', description='Work in flight, by type')
+    async def cmd_status(interaction):
+        await _run_slash(interaction, 'status')
+
+    @tree.command(name='inbox', description='Pending mail, approvals, and Reports awaiting reply')
+    async def cmd_inbox(interaction):
+        await _run_slash(interaction, 'inbox')
+
+    @tree.command(name='nudge', description='Wake a stalled agent')
+    @discord.app_commands.describe(agent='Agent name', reason='Optional reason')
+    async def cmd_nudge(interaction, agent: str, reason=None):
+        text = f'nudge {agent}'
+        if reason:
+            text = f'nudge {agent} {reason}'
+        await _run_slash(interaction, text)
+
+    @tree.command(name='restart', description='git pull + restart bridget')
+    async def cmd_restart(interaction):
+        await _run_slash(interaction, 'restart')
+
     @tree.command(name='route', description='Set/show the crew agent that non-slash DMs target')
     @discord.app_commands.describe(agent='mayor / designer / doctor; omit to show current')
     async def cmd_route(interaction, agent: Optional[str] = None):
