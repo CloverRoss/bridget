@@ -49,6 +49,10 @@ def bridget(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
     chat_dir = tmp_path / 'chat-inbox'
     monkeypatch.setenv('POGO_BRIDGET_CHAT_DIR', str(chat_dir))
+    # Clear any inherited agent-context signal so the explicit-form tests
+    # have a deterministic baseline; env-inference tests (mg-ad08) set
+    # POGO_AGENT_NAME explicitly via monkeypatch.
+    monkeypatch.delenv('POGO_AGENT_NAME', raising=False)
     return _load_bridget(tmp_path)
 
 
@@ -165,6 +169,100 @@ def test_chat_cli_main_rejects_empty_agent(bridget, capsys):
     rc = bridget._chat_cli_main(['   ', 'body text'])
     assert rc == 2
     assert 'agent' in capsys.readouterr().err.lower()
+
+
+# -- 'send' synonym verb (mg-ad08) -----------------------------------------
+
+
+def _only_drop_content():
+    new_dir = Path(os.environ['POGO_BRIDGET_CHAT_DIR']) / 'new'
+    files = list(new_dir.iterdir())
+    assert len(files) == 1, f'expected exactly one drop, got {files}'
+    return files[0].read_text()
+
+
+def test_chat_cli_main_send_synonym_matches_bare_form(bridget):
+    """`chat send <agent> <body>` is identical to `chat <agent> <body>`.
+
+    This is the mg-ad08 bug fix: previously `chat send mayor "hi"` parsed
+    `send` as the agent name and `mayor hi` as the body, surfacing as
+    `[From send]: mayor hi`."""
+    rc = bridget._chat_cli_main(['send', 'mayor', 'hello', 'world'])
+    assert rc == 0
+    content = _only_drop_content()
+    assert 'From: mayor\n' in content
+    assert content.endswith('\n\nhello world\n')
+
+
+def test_chat_cli_main_send_synonym_rejects_missing_body(bridget, capsys):
+    """`chat send <agent>` with no body is still a usage error — the
+    synonym doesn't change arg requirements (the fixture clears
+    POGO_AGENT_NAME, so the env-inferred form isn't in play here)."""
+    rc = bridget._chat_cli_main(['send', 'mayor'])
+    assert rc == 2
+    assert 'usage' in capsys.readouterr().err.lower()
+
+
+def test_chat_cli_main_send_alone_is_usage_error(bridget, capsys):
+    """`chat send` with nothing after it strips to an empty argv → the
+    no-args usage error."""
+    rc = bridget._chat_cli_main(['send'])
+    assert rc == 2
+    assert 'usage' in capsys.readouterr().err.lower()
+
+
+# -- env-inferred sender (mg-ad08) -----------------------------------------
+
+
+def test_chat_cli_main_infers_sender_from_env(bridget, monkeypatch):
+    """With POGO_AGENT_NAME set and a single positional, the sender is
+    inferred from the env var and the lone arg is the whole body."""
+    monkeypatch.setenv('POGO_AGENT_NAME', 'ad08')
+    rc = bridget._chat_cli_main(['all systems green'])
+    assert rc == 0
+    content = _only_drop_content()
+    assert 'From: ad08\n' in content
+    assert content.endswith('\n\nall systems green\n')
+
+
+def test_chat_cli_main_env_infer_via_send_synonym(bridget, monkeypatch):
+    """`chat send <body>` with env set also infers the sender — the
+    `send` verb composes with env inference."""
+    monkeypatch.setenv('POGO_AGENT_NAME', 'crew-doctor')
+    rc = bridget._chat_cli_main(['send', 'patched it'])
+    assert rc == 0
+    content = _only_drop_content()
+    assert 'From: crew-doctor\n' in content
+    assert content.endswith('\n\npatched it\n')
+
+
+def test_chat_cli_main_explicit_form_wins_over_env(bridget, monkeypatch):
+    """Two positionals always take the explicit `<agent> <body>` form
+    even when POGO_AGENT_NAME is set — backward compatibility."""
+    monkeypatch.setenv('POGO_AGENT_NAME', 'ad08')
+    rc = bridget._chat_cli_main(['mayor', 'explicit body'])
+    assert rc == 0
+    content = _only_drop_content()
+    assert 'From: mayor\n' in content
+    assert content.endswith('\n\nexplicit body\n')
+
+
+def test_chat_cli_main_single_arg_without_env_is_usage_error(
+    bridget, capsys, monkeypatch
+):
+    """One positional and no POGO_AGENT_NAME → usage error (the
+    env-inferred form needs the env signal; explicit form needs 2 args)."""
+    monkeypatch.delenv('POGO_AGENT_NAME', raising=False)
+    rc = bridget._chat_cli_main(['lonely'])
+    assert rc == 2
+    assert 'usage' in capsys.readouterr().err.lower()
+
+
+def test_chat_cli_main_env_infer_rejects_empty_body(bridget, monkeypatch):
+    """Env-inferred form with a whitespace-only body still exits 2."""
+    monkeypatch.setenv('POGO_AGENT_NAME', 'ad08')
+    rc = bridget._chat_cli_main(['   '])
+    assert rc == 2
 
 
 # -- script-level CLI invocation -------------------------------------------

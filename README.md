@@ -218,6 +218,8 @@ bridget script as a CLI:
 
 ```
 bridget chat <agent_name> <body...>
+bridget chat send <agent_name> <body...>   # `send` synonym, symmetric with `chat read`
+bridget chat <body...>                      # sender inferred from $POGO_AGENT_NAME
 ```
 
 This drops a maildir-style file in `~/.macguffin/mail/bridget-chat/new/`
@@ -227,9 +229,23 @@ emits each entry as a DM in `[From <agent-name>]: <body>` form. Long
 bodies are split into multiple sequential DMs by `send_dm_chunked`
 (paragraph / line / fence-aware — see mg-a3ef).
 
+- `send` is an accepted synonym verb (mg-ad08): `bridget chat send
+  mayor "hi"` behaves identically to `bridget chat mayor "hi"`. Without
+  it, `send` would be parsed as the agent name and `mayor hi` as the
+  body — the verb form makes the intent unambiguous and mirrors `chat
+  read`.
 - Sender attribution comes from the explicit `<agent_name>` argument,
   not process identity — the caller passes its own crew name or polecat
   work-item id.
+- When no agent arg is given, the sender is inferred from the
+  `POGO_AGENT_NAME` env var (set in crew / polecat contexts), so
+  `bridget chat "all green"` DMs `[From <agent>]: all green` without the
+  caller repeating its own name (mg-ad08). Disambiguation is by
+  positional count: 2+ positionals → explicit `<agent_name> <body...>`
+  (backward compatible); exactly 1 positional with `POGO_AGENT_NAME`
+  set → env-inferred sender. Quote a multi-word body as a single arg
+  to use this form. With no `POGO_AGENT_NAME` set, the explicit form is
+  required.
 - Body args after `<agent_name>` are joined with single spaces. Empty
   body or empty agent name exits 2 with a usage line on stderr.
 - The CLI path short-circuits before `load_config` and the `discord`

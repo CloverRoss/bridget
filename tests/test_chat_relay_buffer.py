@@ -360,8 +360,12 @@ def test_chat_cli_main_no_args_shows_both_usages(bridget, capsys):
     rc = bridget._chat_cli_main([])
     assert rc == 2
     err = capsys.readouterr().err
-    # Help mentions both forms so the user can recover.
-    assert 'bridget chat <agent_name> <body...>' in err
+    # Help mentions every form so the user can recover. The send form
+    # carries the optional `[send]` verb (mg-ad08); the env-inferred
+    # form and the read drain form are listed too.
+    assert 'bridget chat [send] <agent_name> <body...>' in err
+    assert 'bridget chat <body...>' in err
+    assert 'POGO_AGENT_NAME' in err
     assert 'bridget chat read <agent_name>' in err
 
 

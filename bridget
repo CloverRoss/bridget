@@ -763,11 +763,23 @@ def _cache_attachment_for_cli(src: Path) -> Path:
 def _chat_cli_main(argv: list[str]) -> int:
     """Handle the `bridget chat …` CLI verbs.
 
-    Two forms:
+    Forms:
         bridget chat <agent_name> <body...> [--attach FILE ...]
                                               — agent → user DM (mg-c05a),
                                                 with optional image/PDF
                                                 attachments (ds-ff7c)
+        bridget chat send <agent_name> <body...> [--attach FILE ...]
+                                              — `send` is an accepted
+                                                synonym verb, symmetric
+                                                with `chat read`; behaves
+                                                identically to the form
+                                                above (mg-ad08)
+        bridget chat <body...> [--attach FILE ...]
+                                              — no agent arg; sender is
+                                                inferred from the
+                                                POGO_AGENT_NAME env var
+                                                when running in an agent /
+                                                polecat context (mg-ad08)
         bridget chat read <agent_name>        — drain user → agent buffer
 
     `--attach FILE` is repeatable; each file is validated (mime + size)
@@ -776,20 +788,36 @@ def _chat_cli_main(argv: list[str]) -> int:
     CHAT_ATTACHMENTS_DIR (parity with inbound cache); the cached paths
     are what go in the chat-drop envelope.
 
+    Disambiguation between the explicit and env-inferred forms is by
+    positional count: 2+ positionals → explicit `<agent_name> <body...>`
+    (backward compatible); exactly 1 positional with POGO_AGENT_NAME set
+    → env-inferred sender with the lone positional as the body. Quote a
+    multi-word body as a single arg to use the env-inferred form.
+
     Exit codes: 0 on success, 2 on usage error (missing args / empty
     body / empty agent name / bad --attach). Pure stdlib — must work in
     venvs without discord.py installed.
     """
     if not argv:
         print(
-            'bridget: usage: bridget chat <agent_name> <body...> '
+            'bridget: usage: bridget chat [send] <agent_name> <body...> '
             '[--attach FILE ...]\n'
+            '         or:    bridget chat <body...>   '
+            '(sender from $POGO_AGENT_NAME)\n'
             '         or:    bridget chat read <agent_name>',
             file=sys.stderr,
         )
         return 2
     if argv[0] == 'read':
         return _chat_read_cli_main(argv[1:])
+    # `send` is an accepted synonym verb so `bridget chat send <agent>
+    # <body>` works identically to `bridget chat <agent> <body>`
+    # (symmetric with `chat read`). Without it, a caller who typed
+    # `chat send mayor "hi"` would get `send` parsed as the agent name
+    # and `mayor hi` as the body (mg-ad08). Strip the verb and fall
+    # through to the shared parser.
+    if argv[0] == 'send':
+        argv = argv[1:]
     # Split positional args from --attach options. --attach takes the
     # next arg as its value, so we walk argv index-by-index rather than
     # a single pass; stops at -- so explicit literal `--` separates body
@@ -816,18 +844,30 @@ def _chat_cli_main(argv: list[str]) -> int:
             continue
         positional.append(tok)
         i += 1
-    if len(positional) < 2:
+    # Resolve sender + body. Two shapes, disambiguated by positional
+    # count so the explicit form stays backward compatible (mg-ad08):
+    #   2+ positionals → explicit `<agent_name> <body...>`
+    #   1 positional + $POGO_AGENT_NAME set → env-inferred sender, the
+    #     lone positional is the whole body
+    env_sender = (os.environ.get('POGO_AGENT_NAME') or '').strip()
+    if len(positional) >= 2:
+        agent_name = positional[0].strip()
+        body = ' '.join(positional[1:]).strip()
+    elif len(positional) == 1 and env_sender:
+        agent_name = env_sender
+        body = positional[0].strip()
+    else:
         print(
-            'bridget: usage: bridget chat <agent_name> <body...> '
-            '[--attach FILE ...]',
+            'bridget: usage: bridget chat [send] <agent_name> <body...> '
+            '[--attach FILE ...]\n'
+            '         or:    bridget chat <body...>   '
+            '(sender from $POGO_AGENT_NAME)',
             file=sys.stderr,
         )
         return 2
-    agent_name = positional[0].strip()
     if not agent_name:
         print('bridget: chat agent_name cannot be empty', file=sys.stderr)
         return 2
-    body = ' '.join(positional[1:]).strip()
     if not body:
         print('bridget: chat body cannot be empty', file=sys.stderr)
         return 2
