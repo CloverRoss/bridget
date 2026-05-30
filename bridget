@@ -3064,7 +3064,7 @@ def _register_slash_commands(tree) -> None:
 
     @tree.command(name='mail', description='Send a mail (subject required; body optional)')
     @discord.app_commands.describe(subject='Subject line', body='Optional body (multi-line OK)')
-    async def cmd_mail(interaction, subject: str, body=None):
+    async def cmd_mail(interaction, subject: str, body: Optional[str] = None):
         text = f'mail {subject}'
         if body:
             text = f'mail {subject}\n{body}'
@@ -3085,7 +3085,7 @@ def _register_slash_commands(tree) -> None:
 
     @tree.command(name='nudge', description='Wake a stalled agent')
     @discord.app_commands.describe(agent='Agent name', reason='Optional reason')
-    async def cmd_nudge(interaction, agent: str, reason=None):
+    async def cmd_nudge(interaction, agent: str, reason: Optional[str] = None):
         text = f'nudge {agent}'
         if reason:
             text = f'nudge {agent} {reason}'
