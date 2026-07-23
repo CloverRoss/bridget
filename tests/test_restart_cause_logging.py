@@ -43,7 +43,12 @@ def _load_bridget(home: Path):
 @pytest.fixture
 def bridget(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
-    return _load_bridget(tmp_path)
+    module = _load_bridget(tmp_path)
+    # Never let a test in this file exec the real pogo binary (mg-2d4d):
+    # an unpatched run_pogo means any path that reaches the chat-relay
+    # fires a REAL `pogo nudge --immediate mayor ...` at the live mayor.
+    monkeypatch.setattr(module, 'run_pogo', lambda _args: (0, '', ''))
+    return module
 
 
 def _install_on_ready_fakes(bridget, monkeypatch):
@@ -161,6 +166,12 @@ def test_on_message_http_exception_logs_and_does_not_raise(bridget, monkeypatch)
     message.author.id = bridget.USER_ID
     message.channel = MagicMock(spec=discord.DMChannel)
     message.content = 'ping'
+    # A bare MagicMock has a truthy `.attachments`, which routed this
+    # message down the attachment/chat-relay branch of on_message —
+    # bypassing the patched handle_command AND firing a real pogo nudge
+    # at the live mayor (mg-2d4d). Empty list = the plain-DM path this
+    # test means to exercise.
+    message.attachments = []
     message.channel.send = AsyncMock(side_effect=err)
 
     # Must not raise — the existing except block catches.
