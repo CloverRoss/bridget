@@ -45,7 +45,14 @@ def _load_bridget(home: Path):
 @pytest.fixture
 def bridget(tmp_path, monkeypatch):
     monkeypatch.setenv('HOME', str(tmp_path))
-    return _load_bridget(tmp_path)
+    mod = _load_bridget(tmp_path)
+    # The scan/inbox paths call _mg_item_closed → run_mg(['show', <id>]).
+    # Stub it so the suite never execs the real mg binary (see conftest.py,
+    # mg-bfd7). rc!=0 matches real `mg show` on these fake ids, which
+    # _mg_item_closed treats as "not closed" — mails stay surfaced.
+    monkeypatch.setattr(mod, 'run_mg',
+                        lambda args: (1, '', f'no such item: {args[-1]}'))
+    return mod
 
 
 def _write_mail(mail_dir: Path, name: str, subject: str, body: str = 'body text',

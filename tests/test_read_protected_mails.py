@@ -49,6 +49,11 @@ def bridget(tmp_path, monkeypatch):
     new_dir.mkdir(parents=True)
     monkeypatch.setattr(mod, 'MAIL_DIR', new_dir)
     monkeypatch.setattr(mod, 'log_mail_action', lambda *_a, **_k: None)
+    # The inbox path calls _mg_item_closed → run_mg(['show', <id>]). Stub it
+    # so the suite never execs the real mg binary (see conftest.py, mg-bfd7).
+    # rc!=0 matches real `mg show` on these fake ids → "not closed".
+    monkeypatch.setattr(mod, 'run_mg',
+                        lambda args: (1, '', f'no such item: {args[-1]}'))
     return mod
 
 
