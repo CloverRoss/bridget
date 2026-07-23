@@ -1059,6 +1059,25 @@ tree = discord.app_commands.CommandTree(client)
 # rate-limits global registrations).
 _slash_synced = False
 
+# Presence re-assert (mg-beb5). The client never set a presence, so after
+# sleep-driven gateway drops + RESUMEs Discord can keep showing the bot as
+# offline even though the session delivers DMs fine. Re-assert online on
+# ready/resume, plus periodically from watch_mailbox as belt-and-braces.
+PRESENCE_REASSERT_INTERVAL = 45 * 60  # seconds
+_presence_last_attempt = 0.0
+
+
+async def _assert_presence(reason: str) -> None:
+    """Best-effort presence refresh — failures are logged, never raised, so
+    a presence hiccup can't break watchers or the ready path."""
+    global _presence_last_attempt
+    _presence_last_attempt = time.monotonic()
+    try:
+        await client.change_presence(status=discord.Status.online)
+        _log(f'presence re-asserted ({reason})')
+    except Exception as exc:  # noqa: BLE001
+        _log(f'presence re-assert failed ({reason}): {exc}')
+
 
 def parse_mail(content: str) -> dict:
     lines = content.splitlines()
@@ -1299,6 +1318,10 @@ async def watch_mailbox(user: discord.User):
                 save_seen(seen)
         except Exception as e:
             print(f"watch_mailbox loop error: {e}", file=sys.stderr)
+        # Belt-and-braces periodic presence re-assert (mg-beb5): catches any
+        # stale-offline window that slips past the on_ready/on_resumed hooks.
+        if time.monotonic() - _presence_last_attempt > PRESENCE_REASSERT_INTERVAL:
+            await _assert_presence('periodic')
         await asyncio.sleep(POLL_INTERVAL)
 
 
@@ -3420,6 +3443,9 @@ async def on_ready():
     global _watchers_started, _slash_synced
     _log(f'on_ready fired (pid={os.getpid()}, _watchers_started={_watchers_started})')
     print(f"logged in as {client.user} (id={client.user.id})", flush=True)
+    # Re-assert presence on every ready fire, including reconnect re-fires
+    # (before the _watchers_started guard below) — see mg-beb5.
+    await _assert_presence('on_ready')
     if _watchers_started:
         print("on_ready re-fired (reconnect); watchers already running", flush=True)
         return
@@ -3447,6 +3473,14 @@ async def on_ready():
     client.loop.create_task(watch_chat(user))
     client.loop.create_task(_run_inject_api())
     _watchers_started = True
+
+
+@client.event
+async def on_resumed():
+    # A RESUMEd session skips on_ready, so a sleep-driven gateway drop can
+    # leave Discord showing stale offline presence while DMs still flow
+    # both ways. Re-assert online on every resume (mg-beb5).
+    await _assert_presence('on_resumed')
 
 
 @client.event

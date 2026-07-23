@@ -27,8 +27,10 @@ REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / 'bridget'
 
 # Count of background watchers on_ready spawns. Bump when adding a new
-# watcher task in on_ready (mg-c05a: watch_chat brought this to 4).
-EXPECTED_WATCHERS = 4
+# watcher task in on_ready (mg-c05a: watch_chat brought this to 4;
+# ia-5f66: _run_inject_api brought this to 5 — bumped in mg-beb5, the
+# constant had gone stale).
+EXPECTED_WATCHERS = 5
 
 
 def _load_bridget(home: Path):
