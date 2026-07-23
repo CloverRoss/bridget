@@ -189,20 +189,20 @@ def test_format_chat_buffer_drain_plural(bridget):
 
 
 def test_non_slash_dm_buffers_under_current_route(bridget):
-    bridget.save_route('director')
+    bridget.save_route('designer')
 
     pogo_calls = []
     with patch.object(bridget, 'run_pogo',
                       side_effect=lambda args: pogo_calls.append(args) or (0, '', '')):
         reply = bridget.handle_command('hello agents')
 
-    # Buffered under director (the active route), not mayor (the default).
-    msgs = bridget.drain_chat_buffer('director')
+    # Buffered under designer (the active route), not mayor (the default).
+    msgs = bridget.drain_chat_buffer('designer')
     assert [m['body'] for m in msgs] == ['hello agents']
     # mayor untouched.
     assert bridget.drain_chat_buffer('mayor') == []
     assert '💬' in reply
-    assert 'director' in reply
+    assert 'designer' in reply
     # Exactly one pogo nudge dispatched.
     assert len(pogo_calls) == 1
 

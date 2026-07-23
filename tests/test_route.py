@@ -2,7 +2,7 @@
 
 Covers:
 - /route with no arg reports the current target + valid-agents list.
-- /route <agent> for each crew agent (mayor / director / designer / doctor)
+- /route <agent> for each crew agent (mayor / designer / doctor)
   sets the persisted target and replies with the confirmation line.
 - The slash form (`/route ...`) and the back-compat un-prefixed form
   (`route ...`) both reach the same handler.
@@ -82,7 +82,7 @@ def test_load_route_default_when_not_a_dict(bridget):
     assert bridget.load_route() == 'mayor'
 
 
-@pytest.mark.parametrize('agent', ['mayor', 'director', 'designer', 'doctor'])
+@pytest.mark.parametrize('agent', ['mayor', 'designer', 'doctor'])
 def test_save_route_then_load_round_trip(bridget, agent):
     bridget.save_route(agent)
     assert bridget.load_route() == agent
@@ -99,24 +99,24 @@ def test_route_no_arg_shows_default(bridget):
     reply = bridget.handle_command('/route')
     assert 'mayor' in reply
     # Lists every valid agent so the user knows the menu.
-    for agent in ('mayor', 'director', 'designer', 'doctor'):
+    for agent in ('mayor', 'designer', 'doctor'):
         assert agent in reply
     assert '/route <agent>' in reply
 
 
 def test_route_no_arg_shows_current_after_set(bridget):
-    bridget.save_route('director')
+    bridget.save_route('doctor')
     reply = bridget.handle_command('/route')
     # The first agent name in the reply is the current — assert via the
     # leading "Current chat route" label so we don't depend on order of
     # the valid-agents list.
     assert 'Current chat route' in reply
-    assert '**director**' in reply
+    assert '**doctor**' in reply
 
 
 # -- handle_command(/route <agent>) -----------------------------------------
 
-@pytest.mark.parametrize('agent', ['mayor', 'director', 'designer', 'doctor'])
+@pytest.mark.parametrize('agent', ['mayor', 'designer', 'doctor'])
 def test_route_sets_each_crew_agent(bridget, agent):
     reply = bridget.handle_command(f'/route {agent}')
     assert '✓' in reply
@@ -124,7 +124,7 @@ def test_route_sets_each_crew_agent(bridget, agent):
     assert bridget.load_route() == agent
 
 
-@pytest.mark.parametrize('agent', ['MAYOR', 'Director', 'ARCHITECT', 'doctor'])
+@pytest.mark.parametrize('agent', ['MAYOR', 'Designer', 'DOCTOR', 'doctor'])
 def test_route_case_insensitive(bridget, agent):
     reply = bridget.handle_command(f'/route {agent}')
     assert '✓' in reply
@@ -149,13 +149,16 @@ def test_route_unprefixed_back_compat_still_works(bridget):
 
 # -- invalid agent ----------------------------------------------------------
 
-@pytest.mark.parametrize('bad', ['nobody', 'human', 'rando', 'mayor2'])
+# 'director' was removed from ROUTE_VALID_AGENTS when the role was retired
+# (335b73f renamed architect → designer; director went with the Land-side
+# workflow rewrite) — it must now reject like any other unknown agent.
+@pytest.mark.parametrize('bad', ['nobody', 'human', 'rando', 'mayor2', 'director'])
 def test_route_unknown_agent_rejected(bridget, bad):
     reply = bridget.handle_command(f'/route {bad}')
     assert 'Unknown agent' in reply
     assert bad in reply
     # All valid agents enumerated for the user to retry from.
-    for agent in ('mayor', 'director', 'designer', 'doctor'):
+    for agent in ('mayor', 'designer', 'doctor'):
         assert agent in reply
     # Sidecar untouched — still default.
     assert not bridget.ROUTE_FILE.exists()
@@ -163,11 +166,11 @@ def test_route_unknown_agent_rejected(bridget, bad):
 
 
 def test_route_unknown_agent_does_not_overwrite_existing(bridget):
-    bridget.save_route('director')
+    bridget.save_route('doctor')
     reply = bridget.handle_command('/route nobody')
     assert 'Unknown agent' in reply
     # Existing route preserved.
-    assert bridget.load_route() == 'director'
+    assert bridget.load_route() == 'doctor'
 
 
 # -- persistence across "restart" ------------------------------------------

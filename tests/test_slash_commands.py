@@ -27,6 +27,10 @@ import pytest
 
 import discord
 
+# Single source of truth for the on_ready watcher-task count — a hardcoded
+# copy here went stale when ia-5f66 added _run_inject_api (mg-bfd7).
+from test_on_ready_idempotent import EXPECTED_WATCHERS
+
 REPO = Path(__file__).resolve().parent.parent
 SCRIPT = REPO / 'bridget'
 
@@ -260,7 +264,7 @@ def test_on_ready_survives_sync_failure(bridget, monkeypatch):
     # watcher guard prevents that too).
     assert bridget._slash_synced is False
     # Watchers still spawn — that's the point of the try/except.
-    assert fake_client.loop.create_task.call_count == 4
+    assert fake_client.loop.create_task.call_count == EXPECTED_WATCHERS
     assert bridget._watchers_started is True
 
 
