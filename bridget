@@ -68,8 +68,24 @@ MAIL_ACTIONS_LOG = HOME / '.pogo' / 'bridget.mail-actions.log'
 # per-user keying like Robin's state.json. Missing/corrupt → DEFAULT_ROUTE
 # (mayor) on lookup so a fresh install just works.
 ROUTE_FILE = HOME / '.pogo' / 'bridget-route.json'
-ROUTE_VALID_AGENTS = ('mayor', 'designer', 'doctor')
 DEFAULT_ROUTE = 'mayor'
+# Valid /route targets are DISCOVERED, never hardcoded (mg-4d10). The old
+# `ROUTE_VALID_AGENTS = ('mayor', 'designer', 'doctor')` tuple could not
+# track retirement: on this host `designer` was retired to
+# ~/.pogo/agents/crew/designer.md.disabled and `doctor`'s prompt carries
+# `auto_start = false`, so neither ever runs — yet /route happily accepted
+# both and every subsequent message went into a buffer with no drainer.
+# Clover's 2026-07-19 question to `doctor` sat undelivered on disk for 16
+# days. Discovery mirrors pogo's own agent.ListPrompts(): the mayor prompt
+# at ~/.pogo/agents/mayor.md plus every ~/.pogo/agents/crew/*.md. Anything
+# not on that scan path cannot be started by pogod, full stop.
+POGO_AGENTS_DIR = Path(os.environ.get(
+    'POGO_BRIDGET_AGENTS_DIR',
+    str(HOME / '.pogo' / 'agents'),
+))
+# Liveness of the discovered names comes from `pogo agent list --json`,
+# cached briefly so a burst of DMs doesn't fork a pogo per message.
+ROUTE_LIVENESS_CACHE_SEC = 15
 # Chat-relay buffer (mg-c869 — Robin port item 1). Non-slash DMs are
 # appended here keyed by the recipient agent (from /route); the recipient
 # gets a `N new bridget messages` nudge and drains the buffer by running
@@ -78,6 +94,14 @@ DEFAULT_ROUTE = 'mayor'
 # CLI drain don't race. Schema: `{agent: [{ts, body}, ...]}`.
 CHAT_BUFFER_FILE = HOME / '.pogo' / 'bridget-chat-buffer.json'
 CHAT_BUFFER_LOCK = HOME / '.pogo' / 'bridget-chat-buffer.lock'
+# Dead-letter age (mg-4d10). A buffer entry only drains when its recipient
+# itself runs `bridget chat read <name>`, so an entry addressed to an agent
+# that is not running is unreachable for as long as it stays that way. Once
+# an entry has waited longer than this, mayor's next drain adopts it as a
+# dead-letter — reassigned, never deleted, because it is the user's words.
+CHAT_BUFFER_DEADLETTER_AGE_SEC = int(os.environ.get(
+    'POGO_BRIDGET_DEADLETTER_AGE_SEC', str(24 * 3600)
+))
 # Attachment cache for inbound DMs + outbound CLI --attach (ds-ff7c —
 # Robin v3.0 image+PDF relay). Inbound attachments are sha256-hashed and
 # stashed here so duplicate sends dedup to a single file; the outbound
@@ -241,10 +265,13 @@ COMMANDS = [
         'signature': '/route [<agent>]',
         'description': (
             'set or show the crew agent that non-slash DMs target. '
-            'valid agents: mayor / designer / doctor. '
-            'default is mayor; selection persists across bridget '
-            'restart via `~/.pogo/bridget-route.json`. with no argument '
-            'shows the current route + valid agents list. (mg-6b2b)'
+            'valid agents are discovered from pogod\'s prompt scan path '
+            'plus whatever is currently running — routing to a retired '
+            'agent is refused, and routing to a stopped one warns on '
+            'every send (mg-4d10). default is mayor; selection persists '
+            'across bridget restart via `~/.pogo/bridget-route.json`. '
+            'with no argument shows the current route + which agents are '
+            'running vs stopped. (mg-6b2b)'
         ),
     },
     {
@@ -454,6 +481,178 @@ def write_chat_drop(
     tmp.write_text(content, encoding='utf-8')
     os.rename(tmp, final)
     return final
+
+
+# --- agent discovery for /route targeting (mg-4d10) ---------------------
+#
+# Everything here must work from the `bridget chat …` CLI fast-path, which
+# short-circuits before load_config() — so no CONFIG access at import time
+# and no run_pogo (which is defined further down and reads CONFIG).
+
+# Route target statuses, ordered from "message will be read" to "message
+# will rot on disk".
+ROUTE_STATUS_RUNNING = 'running'    # process is up; it will drain
+ROUTE_STATUS_STOPPED = 'stopped'    # startable prompt, but nothing running
+ROUTE_STATUS_RETIRED = 'retired'    # no prompt on the scan path, not running
+ROUTE_STATUS_UNKNOWN = 'unknown'    # startable; pogod unreachable, can't tell
+
+_running_agents_cache: tuple[float, set[str] | None] | None = None
+
+
+def _pogo_bin() -> str | None:
+    """Resolve the pogo binary without requiring CONFIG.
+
+    The chat CLI fast-path runs before load_config(), so CONFIG may not
+    exist yet; globals().get keeps this a lookup rather than a NameError."""
+    cfg = globals().get('CONFIG') or {}
+    return cfg.get('pogo_bin') or os.environ.get('POGO_BIN') or shutil.which('pogo')
+
+
+def discover_startable_agents() -> set[str]:
+    """Names pogod could start, read straight off its prompt scan path.
+
+    Mirrors pogo's internal/agent.ListPrompts(): the mayor prompt at
+    ~/.pogo/agents/mayor.md plus every ~/.pogo/agents/crew/*.md. The `.md`
+    suffix is load-bearing — retiring an agent by renaming its prompt to
+    `designer.md.disabled` (or moving the directory aside) takes it off
+    the scan path, which is exactly the retirement signal the old
+    hardcoded tuple could not see. Templates are excluded: polecat
+    templates are not crew agents."""
+    names: set[str] = set()
+    try:
+        if (POGO_AGENTS_DIR / 'mayor.md').is_file():
+            names.add('mayor')
+    except OSError:
+        pass
+    try:
+        for entry in (POGO_AGENTS_DIR / 'crew').iterdir():
+            if entry.is_file() and entry.name.endswith('.md'):
+                names.add(entry.name[:-len('.md')])
+    except OSError:
+        pass  # missing/unreadable crew dir → nothing startable there
+    return names
+
+
+def _probe_running_agents() -> set[str] | None:
+    """Ask pogod which agents are up. None when it can't be determined.
+
+    None is deliberately distinct from the empty set: "pogod is
+    unreachable" must not be reported to the user as "your agent is
+    dead", and must not trigger the dead-letter sweep.
+
+    POGO_BRIDGET_RUNNING_AGENTS overrides the probe entirely (testing —
+    same idiom as POGO_BRIDGET_CHAT_DIR): `-` forces the unreachable
+    answer, anything else is a comma-separated set of running names, and
+    the empty string means "nothing is running". The test suite defaults
+    it to `-` so no test ever queries the live pogod (tests/conftest.py).
+    """
+    override = os.environ.get('POGO_BRIDGET_RUNNING_AGENTS')
+    if override is not None:
+        if override.strip() == '-':
+            return None
+        return {n.strip() for n in override.split(',') if n.strip()}
+    pogo_bin = _pogo_bin()
+    if not pogo_bin:
+        return None
+    try:
+        r = subprocess.run(
+            [pogo_bin, 'agent', 'list', '--json'],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (subprocess.TimeoutExpired, OSError):
+        return None
+    if r.returncode != 0:
+        return None
+    try:
+        data = json.loads(r.stdout or '[]')
+    except Exception:
+        return None
+    if not isinstance(data, list):
+        return None
+    out: set[str] = set()
+    for item in data:
+        if not isinstance(item, dict):
+            continue
+        name = item.get('name')
+        status = item.get('status')
+        if isinstance(name, str) and name and status == 'running':
+            out.add(name)
+    return out
+
+
+def discover_running_agents(max_age_sec: float | None = None) -> set[str] | None:
+    """Cached _probe_running_agents. None when pogod can't be reached.
+
+    Cached for ROUTE_LIVENESS_CACHE_SEC so a burst of DMs doesn't fork a
+    pogo per message; a stale-by-seconds liveness answer is fine for
+    deciding whether to warn."""
+    global _running_agents_cache
+    ttl = ROUTE_LIVENESS_CACHE_SEC if max_age_sec is None else max_age_sec
+    now = time.monotonic()
+    if _running_agents_cache is not None:
+        stamped, cached = _running_agents_cache
+        if now - stamped < ttl:
+            return set(cached) if cached is not None else None
+    result = _probe_running_agents()
+    _running_agents_cache = (now, set(result) if result is not None else None)
+    return set(result) if result is not None else None
+
+
+def reset_running_agents_cache() -> None:
+    """Drop the liveness cache (tests; and after a route change so the
+    next send re-checks immediately)."""
+    global _running_agents_cache
+    _running_agents_cache = None
+
+
+def known_route_agents() -> set[str]:
+    """Every name /route will accept.
+
+    Startable prompts, plus whatever is actually running — a live polecat
+    has no crew prompt but does drain its buffer, so routing to one is
+    legitimate. DEFAULT_ROUTE is always included so a fresh install with
+    no ~/.pogo/agents yet can still reach mayor."""
+    names = discover_startable_agents()
+    running = discover_running_agents()
+    if running:
+        names |= running
+    names.add(DEFAULT_ROUTE)
+    return names
+
+
+def route_target_status(agent: str) -> str:
+    """Classify a route target: running / stopped / retired / unknown."""
+    running = discover_running_agents()
+    if running is not None and agent in running:
+        return ROUTE_STATUS_RUNNING
+    startable = discover_startable_agents()
+    if agent not in startable and agent != DEFAULT_ROUTE:
+        # No prompt on the scan path and not running: pogod has no way to
+        # start it. This is the retired case that black-holed messages.
+        return ROUTE_STATUS_RETIRED
+    if running is None:
+        return ROUTE_STATUS_UNKNOWN
+    return ROUTE_STATUS_STOPPED
+
+
+def describe_route_targets() -> str:
+    """Human-readable menu of route targets for /route replies, split by
+    liveness so the user can see at a glance which ones will answer."""
+    running = discover_running_agents()
+    startable = discover_startable_agents() | {DEFAULT_ROUTE}
+    if running is None:
+        return (
+            'Known agents (pogod unreachable — liveness unknown): '
+            + ', '.join(sorted(startable))
+        )
+    live = sorted(startable & running) + sorted(running - startable)
+    idle = sorted(startable - running)
+    lines = []
+    lines.append('Running (will read your messages): '
+                 + (', '.join(live) if live else '— none —'))
+    if idle:
+        lines.append('Stopped (messages will queue unread): ' + ', '.join(idle))
+    return '\n'.join(lines)
 
 
 # --- chat-relay buffer (mg-c869 — Robin port item 1) --------------------
@@ -686,6 +885,72 @@ def drain_chat_buffer(recipient: str) -> list[dict]:
     return _with_chat_buffer_lock(_do)
 
 
+def _chat_entry_age_sec(entry: dict, now: datetime.datetime) -> float:
+    """Seconds since `entry` was buffered. Unparseable/missing ts → inf, so
+    a malformed entry ages out rather than being pinned on disk forever."""
+    ts = entry.get('ts')
+    if not isinstance(ts, str):
+        return float('inf')
+    try:
+        parsed = datetime.datetime.strptime(ts, '%Y-%m-%dT%H:%M:%SZ').replace(
+            tzinfo=datetime.timezone.utc
+        )
+    except ValueError:
+        return float('inf')
+    return (now - parsed).total_seconds()
+
+
+def sweep_chat_buffer_deadletters(
+    live: set[str],
+    max_age_sec: int | None = None,
+    now: datetime.datetime | None = None,
+) -> list[dict]:
+    """Reassign undrainable buffer entries to DEFAULT_ROUTE. Returns them.
+
+    The buffer only empties when the recipient itself runs `bridget chat
+    read <name>`, so any entry queued for an agent that is not running is
+    unreachable until that agent starts — and for a retired agent, that is
+    never (mg-4d10). Entries older than max_age_sec whose recipient is not
+    in `live` are moved to mayor's queue, tagged with `orphaned_from` and
+    `orphaned_at`, and surface as a dead-letter section on mayor's next
+    drain.
+
+    Reassigned, not deleted: these are the user's own words and the whole
+    failure being fixed is that they went unanswered. Callers must pass a
+    liveness set they actually determined — never call this with an empty
+    set that merely means "couldn't reach pogod", or it will orphan
+    everything."""
+    max_age = (
+        CHAT_BUFFER_DEADLETTER_AGE_SEC if max_age_sec is None else max_age_sec
+    )
+    cutoff_now = now or datetime.datetime.now(datetime.timezone.utc)
+    stamp = cutoff_now.strftime('%Y-%m-%dT%H:%M:%SZ')
+
+    def _do(buf):
+        moved: list[dict] = []
+        for name in sorted(buf):
+            if name == DEFAULT_ROUTE or name in live:
+                continue
+            keep = []
+            for entry in buf[name]:
+                if _chat_entry_age_sec(entry, cutoff_now) < max_age:
+                    keep.append(entry)
+                    continue
+                orphan = dict(entry)
+                orphan['orphaned_from'] = name
+                orphan['orphaned_at'] = stamp
+                moved.append(orphan)
+            if keep:
+                buf[name] = keep
+            else:
+                buf.pop(name, None)
+        if moved:
+            buf.setdefault(DEFAULT_ROUTE, []).extend(moved)
+        return moved
+
+    return _with_chat_buffer_lock(_do)
+
+
 def format_chat_buffer_drain(agent: str, msgs: list[dict]) -> str:
     """Render the drain output that `bridget chat read <agent>` prints.
 
@@ -699,10 +964,29 @@ def format_chat_buffer_drain(agent: str, msgs: list[dict]) -> str:
         return f'No new bridget messages for {agent}.'
     plural = '' if len(msgs) == 1 else 's'
     lines = [f'{len(msgs)} new bridget message{plural} for {agent}:', '']
+    orphans = [m for m in msgs if m.get('orphaned_from')]
+    if orphans:
+        n = len(orphans)
+        lines.append(
+            f'⚠️ {n} DEAD-LETTER message{"" if n == 1 else "s"} below '
+            f'(marked ☠️): the user addressed {"it" if n == 1 else "them"} '
+            f'to an agent that was not running, so {"it" if n == 1 else "they"} '
+            f'sat undelivered. Nobody has answered {"it" if n == 1 else "them"} '
+            f'— read, act, and reply to the user directly with '
+            f'`bridget chat {agent} "..."` (mg-4d10).'
+        )
+        lines.append('')
     for m in msgs:
         ts = m.get('ts') or '?'
         body = m.get('body') or ''
-        lines.append(f'[{ts}] {body}')
+        orphaned_from = m.get('orphaned_from')
+        if orphaned_from:
+            lines.append(
+                f'☠️ [{ts}] (dead-letter: was routed to `{orphaned_from}`, '
+                f'which never read it) {body}'
+            )
+        else:
+            lines.append(f'[{ts}] {body}')
         for att in m.get('attachments') or []:
             if att.get('rejected'):
                 name = att.get('filename') or att.get('path') or '?'
@@ -933,6 +1217,17 @@ def _chat_read_cli_main(argv: list[str]) -> int:
             file=sys.stderr,
         )
         return 2
+    # mg-4d10: before mayor drains, adopt any entry that has been sitting
+    # in a non-running agent's queue past the dead-letter age. Nothing
+    # else in the system ever revisits those entries — the queue only
+    # empties when its own recipient runs this command, which a stopped
+    # or retired agent never does. Only sweep when liveness is actually
+    # known: `None` means pogod was unreachable, and treating that as
+    # "nothing is running" would orphan live agents' pending mail.
+    if agent_name == DEFAULT_ROUTE:
+        live = discover_running_agents()
+        if live is not None:
+            sweep_chat_buffer_deadletters(live | {agent_name})
     msgs = drain_chat_buffer(agent_name)
     # ia-5f66: stamp mayor's last-poll timestamp so the Inject API can
     # detect mayor-down (returns 503 if no read in INJECT_MAYOR_DOWN_SEC).
@@ -1112,7 +1407,11 @@ def save_seen(seen: set) -> None:
 
 
 def load_route() -> str:
-    """Read ~/.pogo/bridget-route.json. Missing/corrupt/unknown-agent → DEFAULT_ROUTE."""
+    """Read ~/.pogo/bridget-route.json. Missing/corrupt/unknown-agent → DEFAULT_ROUTE.
+
+    "Unknown" is resolved against discovery (mg-4d10), so a route persisted
+    before its target was retired self-heals back to mayor on the next read
+    instead of pointing at an agent that can no longer be started."""
     if not ROUTE_FILE.exists():
         return DEFAULT_ROUTE
     try:
@@ -1123,7 +1422,7 @@ def load_route() -> str:
     if not isinstance(d, dict):
         return DEFAULT_ROUTE
     agent = d.get('route')
-    if not isinstance(agent, str) or agent not in ROUTE_VALID_AGENTS:
+    if not isinstance(agent, str) or agent not in known_route_agents():
         return DEFAULT_ROUTE
     return agent
 
@@ -2501,10 +2800,30 @@ def _route_to_chat_relay(
         # drain output isn't a bare `[ts]` line with only 📎 children.
         body = '(attachment)'
     recipient = load_route()
+    # mg-4d10: check liveness BEFORE claiming delivery. `pogo nudge` falls
+    # back to mail when the agent is down and can still exit 0, so a
+    # successful nudge is not evidence that anyone will read this.
+    status = route_target_status(recipient)
     count = append_chat_buffer(recipient, body, attachments=attachments)
     plural = '' if count == 1 else 's'
     nudge_msg = f'{count} new bridget message{plural}'
     rc, out, err = run_pogo(['nudge', '--immediate', recipient, nudge_msg])
+    if status in (ROUTE_STATUS_STOPPED, ROUTE_STATUS_RETIRED):
+        why = (
+            'is retired (no prompt on pogod\'s scan path) and can never start'
+            if status == ROUTE_STATUS_RETIRED
+            else 'is not running'
+        )
+        hint = (
+            f'`/route {DEFAULT_ROUTE}` to reach a live agent'
+            if status == ROUTE_STATUS_RETIRED
+            else f'`pogo agent start {recipient}`, or `/route {DEFAULT_ROUTE}`'
+        )
+        return (
+            f'⚠️ **NOT DELIVERED** — buffered for `{recipient}` '
+            f'({count} pending), but `{recipient}` {why}, so nobody will '
+            f'read this. Your message is saved, not lost: {hint}.'
+        )
     if rc != 0:
         return (
             f'💬 buffered for `{recipient}` ({count} pending) '
@@ -2820,17 +3139,53 @@ def _dispatch_command(text: str) -> str | list[str]:
         parts = text.split(None, 1)
         if len(parts) == 1:
             current = load_route()
-            valid = ', '.join(ROUTE_VALID_AGENTS)
+            status = route_target_status(current)
+            note = ''
+            if status == ROUTE_STATUS_STOPPED:
+                note = (
+                    f"\n⚠️ **{current} is not running** — messages you send "
+                    f"now will queue unread."
+                )
+            elif status == ROUTE_STATUS_RETIRED:
+                note = (
+                    f"\n⚠️ **{current} is retired** (no prompt on pogod's "
+                    f"scan path) — it can never read your messages."
+                )
             return (
-                f"Current chat route: **{current}**\n"
-                f"Valid agents: {valid}\n"
+                f"Current chat route: **{current}**{note}\n"
+                f"{describe_route_targets()}\n"
                 f"Use `/route <agent>` to change."
             )
         arg = parts[1].strip().lower()
-        if arg not in ROUTE_VALID_AGENTS:
-            valid = ', '.join(ROUTE_VALID_AGENTS)
-            return f"Unknown agent `{arg}`. Valid agents: {valid}."
+        # mg-4d10: validate against agents that can ACTUALLY run, not a
+        # hardcoded tuple. A retired agent's buffer has no drainer, so
+        # accepting the route here is silent data loss on the primary
+        # human channel.
+        status = route_target_status(arg)
+        if status == ROUTE_STATUS_RETIRED:
+            return (
+                f"Cannot route to `{arg}`: it is not running and has no "
+                f"prompt on pogod's scan path (`~/.pogo/agents/mayor.md` or "
+                f"`~/.pogo/agents/crew/{arg}.md`), so it can never start and "
+                f"never read your messages.\n"
+                f"{describe_route_targets()}"
+            )
         save_route(arg)
+        reset_running_agents_cache()
+        if status == ROUTE_STATUS_STOPPED:
+            return (
+                f"⚠️ chat route set to **{arg}**, but **{arg} is not "
+                f"running** — it has a prompt but no live process, so your "
+                f"messages will sit in the buffer unread until someone runs "
+                f"`pogo agent start {arg}`. Start it, or `/route "
+                f"{DEFAULT_ROUTE}` to reach a live agent."
+            )
+        if status == ROUTE_STATUS_UNKNOWN:
+            return (
+                f"✓ chat route set to **{arg}** — but pogod could not be "
+                f"reached to confirm it is running, so delivery is not "
+                f"guaranteed."
+            )
         return (
             f"✓ chat route set to **{arg}** — "
             f"non-slash messages will go to {arg}."

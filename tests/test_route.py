@@ -1,19 +1,28 @@
 """Tests for the `/route` slash command (mg-6b2b, Robin port item 5).
 
+Rewritten for mg-4d10: valid targets are DISCOVERED from pogod's prompt
+scan path plus whatever is running, not read off a hardcoded
+`ROUTE_VALID_AGENTS` tuple. Every test that expects an agent to be
+routable therefore has to put a prompt file where pogod would look for it
+(the `write_crew_prompt` fixture) — which is exactly the property the
+tuple could not express, and exactly why a retired `doctor` stayed
+routable long after it stopped being startable.
+
 Covers:
-- /route with no arg reports the current target + valid-agents list.
-- /route <agent> for each crew agent (mayor / designer / doctor)
-  sets the persisted target and replies with the confirmation line.
+- /route with no arg reports the current target + the live/stopped menu.
+- /route <agent> for a discovered crew agent sets the persisted target.
 - The slash form (`/route ...`) and the back-compat un-prefixed form
   (`route ...`) both reach the same handler.
 - Default target is mayor when the sidecar is missing, empty, corrupt,
-  or names an unknown agent.
+  or names an agent that no longer exists.
 - Persistence across "restart" — re-importing the bridget module against
   the same HOME picks up the saved route.
-- /route <unknown> rejects with the valid-agents list and does not
-  mutate the sidecar.
+- /route <undiscoverable> is refused and does not mutate the sidecar.
 - /route appears in COMMAND_VERBS and COMMANDS surfaces.
 - /route is exposed under the laptop profile (not Robin-only).
+
+Liveness is stubbed via POGO_BRIDGET_RUNNING_AGENTS (conftest defaults it
+to `-`, the pogod-unreachable sentinel, so no test probes the live host).
 """
 import importlib.util
 import json
@@ -45,8 +54,13 @@ def _load_bridget(home: Path):
 
 
 @pytest.fixture
-def bridget(tmp_path, monkeypatch):
+def bridget(tmp_path, monkeypatch, write_crew_prompt):
+    """bridget loaded against a fake HOME carrying mayor + designer +
+    doctor prompts on the scan path — the pre-retirement world the
+    original hardcoded tuple assumed was permanent."""
     monkeypatch.setenv('HOME', str(tmp_path))
+    for name in ('mayor', 'designer', 'doctor'):
+        write_crew_prompt(tmp_path, name)
     return _load_bridget(tmp_path)
 
 
@@ -98,7 +112,7 @@ def test_save_route_then_load_round_trip(bridget, agent):
 def test_route_no_arg_shows_default(bridget):
     reply = bridget.handle_command('/route')
     assert 'mayor' in reply
-    # Lists every valid agent so the user knows the menu.
+    # Lists every discovered agent so the user knows the menu.
     for agent in ('mayor', 'designer', 'doctor'):
         assert agent in reply
     assert '/route <agent>' in reply
@@ -109,7 +123,7 @@ def test_route_no_arg_shows_current_after_set(bridget):
     reply = bridget.handle_command('/route')
     # The first agent name in the reply is the current — assert via the
     # leading "Current chat route" label so we don't depend on order of
-    # the valid-agents list.
+    # the discovered-agents list.
     assert 'Current chat route' in reply
     assert '**doctor**' in reply
 
@@ -117,7 +131,11 @@ def test_route_no_arg_shows_current_after_set(bridget):
 # -- handle_command(/route <agent>) -----------------------------------------
 
 @pytest.mark.parametrize('agent', ['mayor', 'designer', 'doctor'])
-def test_route_sets_each_crew_agent(bridget, agent):
+def test_route_sets_each_crew_agent(bridget, monkeypatch, agent):
+    # Declare the target as running so the reply is the clean ✓ form
+    # rather than the not-running warning (that path belongs to mg-4d10,
+    # see test_route_retired_agents.py).
+    monkeypatch.setenv('POGO_BRIDGET_RUNNING_AGENTS', agent)
     reply = bridget.handle_command(f'/route {agent}')
     assert '✓' in reply
     assert f'**{agent}**' in reply
@@ -125,13 +143,15 @@ def test_route_sets_each_crew_agent(bridget, agent):
 
 
 @pytest.mark.parametrize('agent', ['MAYOR', 'Designer', 'DOCTOR', 'doctor'])
-def test_route_case_insensitive(bridget, agent):
+def test_route_case_insensitive(bridget, monkeypatch, agent):
+    monkeypatch.setenv('POGO_BRIDGET_RUNNING_AGENTS', agent.lower())
     reply = bridget.handle_command(f'/route {agent}')
     assert '✓' in reply
     assert bridget.load_route() == agent.lower()
 
 
-def test_route_strips_surrounding_whitespace(bridget):
+def test_route_strips_surrounding_whitespace(bridget, monkeypatch):
+    monkeypatch.setenv('POGO_BRIDGET_RUNNING_AGENTS', 'doctor')
     reply = bridget.handle_command('/route   doctor   ')
     assert '✓' in reply
     assert bridget.load_route() == 'doctor'
@@ -139,25 +159,27 @@ def test_route_strips_surrounding_whitespace(bridget):
 
 # -- back-compat un-prefixed form (handle_command path covers it) ----------
 
-def test_route_unprefixed_back_compat_still_works(bridget):
+def test_route_unprefixed_back_compat_still_works(bridget, monkeypatch):
     # mg-a0f3 keeps the un-slashed verbs working for one release with a
     # stderr deprecation log; verify /route honors that path too.
+    monkeypatch.setenv('POGO_BRIDGET_RUNNING_AGENTS', 'designer')
     reply = bridget.handle_command('route designer')
     assert '✓' in reply
     assert bridget.load_route() == 'designer'
 
 
-# -- invalid agent ----------------------------------------------------------
+# -- undiscoverable agent ---------------------------------------------------
 
-# 'director' was removed from ROUTE_VALID_AGENTS when the role was retired
-# (335b73f renamed architect → designer; director went with the Land-side
-# workflow rewrite) — it must now reject like any other unknown agent.
+# 'director' was removed when the role was retired (335b73f renamed
+# architect → designer; director went with the Land-side workflow
+# rewrite). Under mg-4d10 it rejects not because a tuple omits it but
+# because no prompt for it exists on pogod's scan path.
 @pytest.mark.parametrize('bad', ['nobody', 'human', 'rando', 'mayor2', 'director'])
 def test_route_unknown_agent_rejected(bridget, bad):
     reply = bridget.handle_command(f'/route {bad}')
-    assert 'Unknown agent' in reply
+    assert 'Cannot route to' in reply
     assert bad in reply
-    # All valid agents enumerated for the user to retry from.
+    # All discovered agents enumerated for the user to retry from.
     for agent in ('mayor', 'designer', 'doctor'):
         assert agent in reply
     # Sidecar untouched — still default.
@@ -168,16 +190,18 @@ def test_route_unknown_agent_rejected(bridget, bad):
 def test_route_unknown_agent_does_not_overwrite_existing(bridget):
     bridget.save_route('doctor')
     reply = bridget.handle_command('/route nobody')
-    assert 'Unknown agent' in reply
+    assert 'Cannot route to' in reply
     # Existing route preserved.
     assert bridget.load_route() == 'doctor'
 
 
 # -- persistence across "restart" ------------------------------------------
 
-def test_route_persists_across_restart(tmp_path, monkeypatch):
+def test_route_persists_across_restart(tmp_path, monkeypatch, write_crew_prompt):
     # First import: set route to designer.
     monkeypatch.setenv('HOME', str(tmp_path))
+    for name in ('mayor', 'designer'):
+        write_crew_prompt(tmp_path, name)
     mod1 = _load_bridget(tmp_path)
     mod1.handle_command('/route designer')
     assert mod1.load_route() == 'designer'

@@ -189,16 +189,61 @@ control surface; **everything that isn't a slash command is chat**.
 ### User → agent (non-slash DM)
 
 Any non-slash DM is buffered for the crew agent set by `/route`
-(`mayor` / `director` / `architect` / `doctor`; default `mayor`) and the
-recipient gets a `pogo nudge --immediate <agent> "N new bridget
-messages"`, where N is the per-recipient pending count. The buffer
-lives at `~/.pogo/bridget-chat-buffer.json` (schema `{agent: [{ts,
-body}, …]}`), serialized via fcntl-locked read-modify-write so the
-daemon's append and the agent-side drain don't race. The user's reply
-is `💬 sent to \`<agent>\` (<N> pending)`; if the nudge itself fails
-the message is still buffered and the reply surfaces the nudge error
-so delivery isn't silent. Empty / whitespace DMs aren't buffered —
-they reply with a `/help` hint.
+(default `mayor`) and the recipient gets a `pogo nudge --immediate
+<agent> "N new bridget messages"`, where N is the per-recipient pending
+count. The buffer lives at `~/.pogo/bridget-chat-buffer.json` (schema
+`{agent: [{ts, body}, …]}`), serialized via fcntl-locked
+read-modify-write so the daemon's append and the agent-side drain don't
+race. The user's reply is `💬 sent to \`<agent>\` (<N> pending)`; if the
+nudge itself fails the message is still buffered and the reply surfaces
+the nudge error so delivery isn't silent. Empty / whitespace DMs aren't
+buffered — they reply with a `/help` hint.
+
+### Valid `/route` targets are discovered, not hardcoded (mg-4d10)
+
+`/route` accepts an agent only if pogod could actually run it. The valid
+set is discovered on every call, mirroring pogo's own
+`internal/agent.ListPrompts()`:
+
+- `~/.pogo/agents/mayor.md`, plus every `~/.pogo/agents/crew/*.md`
+  (the `.md` suffix is load-bearing — retiring an agent by renaming its
+  prompt to `designer.md.disabled` takes it off the scan path), **plus**
+- whatever `pogo agent list --json` reports as `running` (so a live
+  polecat, which has no crew prompt, is still a legal target).
+
+`mayor` is always accepted so a fresh install is never locked out.
+Override the scan root with `POGO_BRIDGET_AGENTS_DIR` (testing).
+
+Each target then falls into one of three states, and the reply differs:
+
+| State | Meaning | `/route <agent>` |
+|---|---|---|
+| **running** | process is up; it will drain the buffer | `✓ chat route set to …` |
+| **stopped** | prompt exists but nothing is running | accepted **with a warning**, and *every* subsequent send replies `⚠️ NOT DELIVERED` |
+| **retired** | no prompt on the scan path and not running | **refused**, with the path it looked for |
+
+If pogod can't be reached at all, bridget says so rather than declaring
+agents dead.
+
+This closes a silent data-loss path: `/route` used to validate against a
+hardcoded `('mayor', 'designer', 'doctor')` tuple, which by construction
+could not notice retirement. `/route doctor` returned a cheerful `✓` for
+an agent pogod never starts, and every following message went into a
+buffer with no drainer — Clover's 2026-07-19 question sat unread on disk
+for 16 days.
+
+#### Dead-letter handling
+
+The buffer only empties when the recipient itself runs `bridget chat read
+<name>`, so an entry queued for an agent that never runs is unreachable.
+Once such an entry is older than 24h (`POGO_BRIDGET_DEADLETTER_AGE_SEC`),
+mayor's next drain **adopts** it: the entry is re-addressed to `mayor`,
+tagged with `orphaned_from` / `orphaned_at`, and rendered under a
+`⚠️ DEAD-LETTER` header with a `☠️` marker naming the agent it was
+originally sent to. Entries are reassigned, never deleted — they are the
+user's own words, and going unanswered is the failure being fixed. The
+sweep only runs when liveness is actually known; "pogod unreachable"
+never triggers it.
 
 The agent drains its queue with the CLI:
 

@@ -188,7 +188,15 @@ def test_format_chat_buffer_drain_plural(bridget):
 # -- handle_command non-slash → chat-relay ---------------------------------
 
 
-def test_non_slash_dm_buffers_under_current_route(bridget):
+def test_non_slash_dm_buffers_under_current_route(
+    bridget, tmp_path, monkeypatch, write_crew_prompt
+):
+    # mg-4d10: load_route only honours a persisted target that is still
+    # discoverable, so designer needs a prompt on the scan path — and
+    # must be declared running, or the reply is the not-delivered warning
+    # instead of the 💬 confirmation.
+    write_crew_prompt(tmp_path, 'designer')
+    monkeypatch.setenv('POGO_BRIDGET_RUNNING_AGENTS', 'designer')
     bridget.save_route('designer')
 
     pogo_calls = []

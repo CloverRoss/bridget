@@ -127,6 +127,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `/route` no longer accepts retired agents, and messages to an agent
+  that cannot read them are never reported as delivered (mg-4d10).
+  Valid targets were a hardcoded `ROUTE_VALID_AGENTS = ('mayor',
+  'designer', 'doctor')` tuple, which by construction could not track
+  retirement: on Clover's host `designer` had been renamed off pogod's
+  scan path and `doctor` carries `auto_start = false`, so neither ever
+  runs — yet `/route doctor` replied `✓ chat route set to doctor` and
+  every following non-slash DM was buffered for an agent with no
+  drainer. `drain_chat_buffer` only fires when the recipient itself
+  runs `bridget chat read <name>`, so those entries were unreachable
+  forever. Clover's 2026-07-19 question ("I closed the laptop which is
+  probably why mayor showed as unhealthy. Is it ok now?") sat unread on
+  disk for 16 days; she re-routed to mayor 12 seconds after sending it
+  and never got an answer.
+
+  The tuple is gone. Valid targets are now discovered per call —
+  `~/.pogo/agents/mayor.md` plus `~/.pogo/agents/crew/*.md`, mirroring
+  pogo's `internal/agent.ListPrompts()`, union whatever `pogo agent
+  list --json` reports running (so live polecats are routable too).
+  Routing to an agent with no prompt on the scan path is **refused**
+  with the path it looked for; routing to one that has a prompt but no
+  live process is accepted **with a warning**, and every subsequent
+  send replies `⚠️ NOT DELIVERED` rather than `💬 sent` — a zero exit
+  from `pogo nudge` is not evidence of delivery, since nudge falls back
+  to mail when the agent is down. A route persisted before its target
+  was retired self-heals to `mayor` on the next read. When pogod cannot
+  be reached, bridget reports uncertainty instead of declaring agents
+  dead.
+
+  Buffer entries that already have no possible drainer are handed to
+  mayor rather than deleted: on mayor's next `bridget chat read mayor`,
+  any entry older than 24h
+  (`POGO_BRIDGET_DEADLETTER_AGE_SEC`) whose recipient is not running is
+  re-addressed to mayor, tagged `orphaned_from` / `orphaned_at`, and
+  rendered under a `⚠️ DEAD-LETTER` header marked `☠️` with the agent
+  it was originally sent to. They are the user's own words — reassigned,
+  never expired. The sweep only runs when liveness is actually known.
+
+  New testing seams: `POGO_BRIDGET_AGENTS_DIR` (scan root) and
+  `POGO_BRIDGET_RUNNING_AGENTS` (`-` = pogod unreachable, otherwise a
+  comma-separated running set); the suite defaults the latter to `-` so
+  no test probes the live pogod.
+
 - Projects bucket reads mg native status field (`claimed` = In
   Progress) as the primary signal per project-status-tag-convention
   2026-05-15. Transitional fallback continues to bucket

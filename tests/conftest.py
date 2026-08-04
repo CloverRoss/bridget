@@ -24,8 +24,35 @@ that shim's dir to PATH inside the test — it will shadow this guard.
 """
 import os
 import stat
+from pathlib import Path
 
 import pytest
+
+
+@pytest.fixture
+def write_crew_prompt():
+    """Place a prompt file on pogod's scan path inside a fake HOME.
+
+    mg-4d10: /route validity is discovered from this layout rather than a
+    hardcoded tuple, mirroring pogo's internal/agent.ListPrompts() — the
+    mayor prompt at ~/.pogo/agents/mayor.md and crew prompts at
+    ~/.pogo/agents/crew/<name>.md. Tests that expect an agent to be
+    routable must create its prompt; that is the whole point of the fix.
+    """
+    def _write(home, name, auto_start=False):
+        root = Path(home) / '.pogo' / 'agents'
+        path = (root / 'mayor.md') if name == 'mayor' else (
+            root / 'crew' / f'{name}.md'
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            '+++\n'
+            f'auto_start = {"true" if auto_start else "false"}\n'
+            '+++\n\n'
+            f'# {name}\n'
+        )
+        return path
+    return _write
 
 _GUARDED_BINARIES = ('pogo', 'mg')
 
@@ -56,6 +83,15 @@ def block_real_execs(_exec_guard_bin, tmp_path, monkeypatch):
     monkeypatch.setenv(
         'PATH', f'{_exec_guard_bin}{os.pathsep}{os.environ["PATH"]}'
     )
+    # mg-4d10: /route now resolves agent liveness via `pogo agent list
+    # --json` instead of a hardcoded tuple, which would exec the real pogo
+    # on any test touching /route or the chat relay. `-` is the
+    # "pogod unreachable" sentinel — the safe default, since it makes
+    # bridget degrade rather than claim agents are dead. A test that cares
+    # about liveness declares its own world by setting this to a
+    # comma-separated list of running agent names (empty string = nothing
+    # running). See bridget._probe_running_agents.
+    monkeypatch.setenv('POGO_BRIDGET_RUNNING_AGENTS', '-')
     yield
     if log.exists() and log.read_text().strip():
         pytest.fail(
