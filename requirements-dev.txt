@@ -1,0 +1,3 @@
+# Test-only dependencies. Installed into the same venv as requirements.txt by
+# install.sh; needed by ./test.sh, which is the refinery merge gate.
+pytest>=8

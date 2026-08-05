@@ -5,5 +5,10 @@ __pycache__/
 *.log
 .DS_Store
 
-# pogo creates a search index inside any visited project — not source
-.pogo/
+# pogo creates a search index inside any visited project — not source.
+# refinery.toml is the exception: it is our merge-gate config and must be
+# committed for the refinery to see it. (Ignoring `.pogo/` wholesale would
+# stop git descending into the directory at all, so the pattern has to be
+# `.pogo/*` for the negation below to take effect.)
+.pogo/*
+!.pogo/refinery.toml

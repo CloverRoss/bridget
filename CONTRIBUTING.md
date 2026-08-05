@@ -19,12 +19,27 @@ roadmap/bug state) before requesting review.
 
 ## Style and testing
 
-bridget is a single-file Python script targeting Python 3.10+. Match the
+bridget is a single-file Python script targeting Python 3.9+. Match the
 existing style in `bridget` — there's no separate formatter or linter
-configured. Before opening a PR, run `./test.sh` from the repo root; it's a
-`py_compile` smoke check that catches import-time syntax errors. There's no
-real test suite yet, so manual verification against a live Discord bot is
-expected for behavior changes.
+configured.
+
+Before opening a PR, run both gates from the repo root:
+
+- `./build.sh` — compiles `bridget` and `tests/`, catching import-time syntax
+  errors.
+- `./test.sh` — runs the pytest suite in `tests/` (600+ tests).
+
+Both run under the venv `install.sh` creates (`~/.pogo/venv-bridget`), which is
+the same interpreter the service runs in production — not whatever `python3`
+happens to be first on your `PATH`. Run `./install.sh` first if you haven't;
+the gates fail loudly rather than falling back to a different Python, because a
+gate that quietly runs under the wrong interpreter is worse than no gate.
+Override with `BRIDGET_GATE_PYTHON` if your install is non-standard.
+
+These same two commands are the merge gate — the refinery runs them on every
+merge request (see `.pogo/refinery.toml`), so a change that breaks any test
+cannot land. A green suite is not a substitute for manual verification against
+a live Discord bot on behavior changes, but it is now a hard requirement.
 
 After `./test.sh` passes, you can also run
 `./tests/smoke-fresh-install.sh` to exercise every Discord command

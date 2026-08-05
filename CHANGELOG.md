@@ -102,6 +102,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- `test.sh` now runs the real pytest suite instead of a `py_compile` smoke
+  check, and the refinery's merge gates are pinned explicitly in
+  `.pogo/refinery.toml`. The suite had grown to 606 tests while `test.sh`
+  still only proved that `bridget` parsed, so nothing in `tests/` gated a
+  merge — a change could break every test and still merge green. `build.sh`
+  keeps the syntax check (now covering `tests/` as well) and both gates
+  resolve their interpreter through the new `gate-python.sh`, which pins
+  them to the venv the service actually runs under (Python 3.9) rather than
+  a dev box's `python3`; they fail loudly if that venv is missing instead of
+  silently falling back. Test-only deps moved to `requirements-dev.txt`,
+  installed by `install.sh`. No runtime behavior change. (mg-825f)
+
 - Command parser now requires a leading `/` prefix on every command
   (Robin-style slash commands; Robin port item 2). Non-slash DMs route
   to the chat-relay (mg-c869) — buffered for the agent set by `/route`

@@ -1,0 +1,22 @@
+# Refinery quality gates for bridget.
+#
+# Naming the gates here is deliberate. Without this file the refinery falls
+# back to "run ./build.sh and ./test.sh if they exist" — and if they ever stop
+# existing, gates resolve to empty and every MR passes with
+# "(no quality gates configured)". Listing them turns a deleted or renamed
+# gate script into a hard failure instead of a silent green, which is the same
+# failure class mg-825f was filed for.
+#
+#   ./build.sh — py_compile of bridget + tests/ under the interpreter
+#                production actually runs (Python 3.9, not the dev box's 3.14)
+#   ./test.sh  — the pytest suite in tests/. Until mg-825f this was a
+#                py_compile smoke check, so none of the 606 tests gated a
+#                merge: a change could break every one and still merge green.
+#
+# Notes for future edits:
+# - pogo's refinery.toml parser is line-based; keep `commands` on one line.
+# - Both scripts resolve their interpreter through gate-python.sh and refuse
+#   to fall back to a bare python3, so pogod's inherited PATH is irrelevant
+#   here — only $HOME (or $BRIDGET_GATE_PYTHON) matters.
+[gates]
+commands = ["./build.sh", "./test.sh"]

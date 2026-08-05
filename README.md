@@ -13,7 +13,10 @@ nohup, or whatever supervisor you like.
   location, set `MG_BIN` in the env file — see below.)
 - A canonical pogo mail layout at `~/.macguffin/mail/human/{new,cur}/`, or set
   `POGO_MAIL_DIR` to the parent of `new/` and `cur/`.
-- **Python 3.10+** with `venv` available (`python3 -m venv ...`).
+- **Python 3.9+** with `venv` available (`python3 -m venv ...`). The reference
+  install runs 3.9, and `build.sh` compiles the source under the venv
+  interpreter rather than whatever `python3` resolves to, so 3.10-only syntax
+  (`match`) fails the build gate.
 - A **Discord bot** with the "Message Content" privileged intent enabled
   ([Discord developer portal](https://discord.com/developers/applications)),
   installed in a server you control. You need three values:
@@ -523,7 +526,7 @@ attachments relayed through bridget (no cross-LLM leak of user files).
 ## Project status
 
 **v1.0 — feature parity with the original author's personal install.** Should
-work on any macOS or Linux machine with Python 3.10+, pogo installed, and a
+work on any macOS or Linux machine with Python 3.9+, pogo installed, and a
 Discord bot. Issues and patches that improve portability or add platform
 support are welcome.
 

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Idempotent installer for bridget.
 #
-# - Creates ~/.pogo/venv-bridget/ if missing and installs requirements.txt.
+# - Creates ~/.pogo/venv-bridget/ if missing and installs requirements.txt
+#   plus requirements-dev.txt (pytest — ./test.sh runs under this venv).
 # - Symlinks ~/.pogo/bin/bridget → this repo's bridget script.
 # - Seeds ~/.pogo/bridget.env from bridget.env.example if no env file exists.
 # - Verifies `mg` is on PATH and prints next-step instructions.
@@ -37,6 +38,13 @@ fi
 log "installing requirements"
 "$VENV_DIR/bin/pip" install --quiet --upgrade pip
 "$VENV_DIR/bin/pip" install --quiet -r "$REPO_DIR/requirements.txt"
+
+# Test deps go in the same venv: ./test.sh is the refinery merge gate and runs
+# under this interpreter (see gate-python.sh), so pytest has to live here.
+if [[ -f "$REPO_DIR/requirements-dev.txt" ]]; then
+    log "installing dev requirements (test gate)"
+    "$VENV_DIR/bin/pip" install --quiet -r "$REPO_DIR/requirements-dev.txt"
+fi
 
 # 2. symlink ~/.pogo/bin/bridget → repo script
 mkdir -p "$BIN_DIR"
