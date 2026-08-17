@@ -161,6 +161,49 @@ _gateway_hb_frames = 0
 _gateway_hb_latency_seen = False
 _gateway_hb_skipped_no_latency = 0
 
+# --- DM gap backfill on reconnect (mg-c1d5, amended) ------------------------
+#
+# THE ACTUAL BUG. The 2026-08-17 outage was not cosmetic and it was not
+# outbound. Outbound worked the whole time — Clover received mayor's messages.
+# What broke was INBOUND: she sent mayor two messages and neither ever arrived.
+# They were permanently LOST, and that is how she found out anything was wrong.
+#
+# WHY A RECONNECT IS NOT A FIX. Discord does not re-deliver DMs that arrived
+# while the bot was disconnected; a fresh IDENTIFY starts the event stream at
+# NOW. So a watchdog that spots a dead gateway and kickstarts the bridge
+# shortens the outage and makes it visible, but every message sent during the
+# gap is still gone. With the heartbeat and watchdog alone, Clover's two
+# messages would STILL have been lost.
+#
+# THE FIX. Treat the live gateway stream as lossy and reconcile against the
+# channel's own history on every reconnect: persist the id of the last message
+# actually processed, and on reconnect fetch everything AFTER it and process
+# what was missed, in order, before resuming. Same shape as
+# land-robin-receive resubscribing with since=<last consumed id> instead of
+# resuming at "now" and eating the gap.
+#
+# Message ids are Discord snowflakes — monotonically increasing and
+# time-ordered — so "after this id" is exactly "everything since I last
+# looked", with no clock involved on either side.
+DM_WATERMARK_FILE = Path(os.environ.get(
+    'POGO_BRIDGET_DM_WATERMARK',
+    str(HOME / '.pogo' / 'bridget-dm-watermark.json'),
+))
+# Cap on one backfill pass. A cap is necessary (an unbounded history fetch on a
+# very old watermark would hammer the API), but hitting it means messages older
+# than the newest BACKFILL_LIMIT in the gap were NOT replayed — so reaching it
+# is logged as loudly as a missing watermark. 500 is ~5 API pages.
+DM_BACKFILL_LIMIT = int(os.environ.get('POGO_BRIDGET_BACKFILL_LIMIT', '500'))
+# Ids processed in this process, newest-biased, for the one window the
+# watermark cannot cover: a message that arrives on the live stream WHILE a
+# backfill pass is walking the same range. The watermark alone handles every
+# cross-restart case (it only ever moves forward, so id <= watermark is already
+# done); this deque handles the concurrent one. Bounded so a long-lived process
+# cannot grow it without limit.
+_dm_processed_ids = deque(maxlen=2048)  # type: deque
+_dm_processed_id_set = set()
+_dm_backfill_running = False
+
 # Chat inbox (mg-c05a — Robin port item 6). File-drop transport from
 # `bridget chat <agent> <body>` CLI to a DM. Mirrors Robin's chat channel
 # pattern: the CLI drops a maildir-style file in new/, the daemon polls
@@ -1498,6 +1541,94 @@ def _stamp_gateway_heartbeat(reason: str, force: bool = False) -> bool:
     if latency is not None:
         _gateway_hb_latency_seen = True
     return True
+
+
+# --- DM watermark ------------------------------------------------------------
+
+def load_dm_watermark(channel_id: int) -> Optional[int]:
+    """Last message id processed on `channel_id`, or None if unknown.
+
+    None is a real answer, not a default: it means "I do not know where I
+    left off", and the caller must say so LOUDLY rather than quietly
+    resuming at now. A silent start-from-now is exactly how the gap became
+    invisible in the first place."""
+    if not DM_WATERMARK_FILE.exists():
+        return None
+    try:
+        data = json.loads(DM_WATERMARK_FILE.read_text())
+    except (OSError, ValueError) as exc:
+        _log(f'BACKFILL: watermark file unreadable ({exc}) — treating as '
+             f'UNKNOWN, not as "start from now"')
+        return None
+    if not isinstance(data, dict):
+        _log('BACKFILL: watermark file is not an object — treating as UNKNOWN')
+        return None
+    entry = data.get(str(channel_id))
+    if isinstance(entry, dict):
+        entry = entry.get('last_message_id')
+    try:
+        value = int(entry)
+    except (TypeError, ValueError):
+        return None
+    return value if value > 0 else None
+
+
+def save_dm_watermark(channel_id: int, message_id: int) -> None:
+    """Advance the watermark for `channel_id`. Monotonic: never moves back.
+
+    Rewinding would mean re-replaying (and re-acting on) messages already
+    handled, so an out-of-order write is dropped rather than trusted."""
+    current = load_dm_watermark(channel_id)
+    if current is not None and message_id <= current:
+        return
+    try:
+        data = {}
+        if DM_WATERMARK_FILE.exists():
+            try:
+                loaded = json.loads(DM_WATERMARK_FILE.read_text())
+                if isinstance(loaded, dict):
+                    data = loaded
+            except ValueError:
+                pass   # corrupt: rewrite it rather than lose the new mark
+        data[str(channel_id)] = {
+            'last_message_id': int(message_id),
+            'updated_at': datetime.datetime.now(datetime.timezone.utc)
+            .isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        }
+        DM_WATERMARK_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = DM_WATERMARK_FILE.parent / (DM_WATERMARK_FILE.name + '.tmp')
+        tmp.write_text(json.dumps(data, indent=2, sort_keys=True) + '\n')
+        os.replace(tmp, DM_WATERMARK_FILE)
+    except (OSError, TypeError, ValueError) as exc:
+        # Non-fatal, but it means the NEXT reconnect will re-replay from an
+        # older mark (duplicates, deduped) or not know where it was. Never
+        # raise: this is called from the DM path, and losing the ability to
+        # answer a message is strictly worse than losing the bookmark.
+        _log(f'BACKFILL: could not persist watermark for channel '
+             f'{channel_id}: {exc}')
+
+
+def _mark_message_processed(message_id: int) -> None:
+    """Record an id for the in-process dedupe window."""
+    if message_id in _dm_processed_id_set:
+        return
+    if len(_dm_processed_ids) == _dm_processed_ids.maxlen:
+        _dm_processed_id_set.discard(_dm_processed_ids[0])
+    _dm_processed_ids.append(message_id)
+    _dm_processed_id_set.add(message_id)
+
+
+def _already_processed(channel_id: int, message_id: int) -> bool:
+    """True if this exact message has already been handled.
+
+    Two independent guards, because they cover different windows: the
+    watermark survives restarts and covers everything at or below it, and
+    the in-process id set covers a message that lands on the live stream
+    while a backfill pass is walking the same range."""
+    if message_id in _dm_processed_id_set:
+        return True
+    mark = load_dm_watermark(channel_id)
+    return mark is not None and message_id <= mark
 
 
 def parse_mail(content: str) -> dict:
@@ -3927,6 +4058,13 @@ async def on_ready():
     # Re-assert presence on every ready fire, including reconnect re-fires
     # (before the _watchers_started guard below) — see mg-beb5.
     await _assert_presence('on_ready')
+    # Reconcile against the channel's own history BEFORE resuming live
+    # handling (mg-c1d5). A fresh IDENTIFY starts the event stream at now, so
+    # every DM sent while we were disconnected is otherwise gone — which is
+    # the failure this ticket exists for. Runs on EVERY ready fire, including
+    # the reconnect re-fires the guard below short-circuits: those are exactly
+    # the ones with a gap behind them.
+    await _backfill_dm_gap('on_ready')
     if _watchers_started:
         print("on_ready re-fired (reconnect); watchers already running", flush=True)
         return
@@ -3962,6 +4100,13 @@ async def on_resumed():
     # leave Discord showing stale offline presence while DMs still flow
     # both ways. Re-assert online on every resume (mg-beb5).
     await _assert_presence('on_resumed')
+    # A RESUME is supposed to replay the events missed while the socket was
+    # down, but only within Discord's replay window and only if the session
+    # was still valid — and a partial replay looks identical to a complete
+    # one from in here. Reconcile anyway (mg-c1d5): the dedupe makes a
+    # redundant pass free, and assuming the stream is complete is precisely
+    # the assumption that lost Clover's messages.
+    await _backfill_dm_gap('on_resumed')
 
 
 @client.event
@@ -3981,14 +4126,11 @@ async def on_socket_raw_receive(msg: str) -> None:
     _stamp_gateway_heartbeat('socket_receive')
 
 
-@client.event
-async def on_message(message: discord.Message):
-    if message.author.bot:
-        return
-    if message.author.id != USER_ID:
-        return
-    if not isinstance(message.channel, discord.DMChannel):
-        return
+async def _dispatch_dm(message: discord.Message, source: str) -> None:
+    """Handle one user DM. The ONE path for both the live gateway stream and
+    the reconnect backfill (mg-c1d5) — a backfilled message must be treated
+    exactly like a live one, or the replay silently behaves differently from
+    the thing it is replaying."""
     # Ingest attachments before dispatch (ds-ff7c): image/* + PDF go to
     # the chat-relay buffer alongside the body, oversized ones get a
     # one-line warn-reply + a rejected entry. Slash and known-verb
@@ -4005,7 +4147,7 @@ async def on_message(message: discord.Message):
                 'attachments; resend as chat-relay if you meant to share'
             )
         except discord.HTTPException as e:
-            _log(f'on_message attachments-dropped warn failed: {e}')
+            _log(f'{source} attachments-dropped warn failed: {e}')
         reply = handle_command(message.content)
     elif attachments_present:
         ingested = await _ingest_attachments(message)
@@ -4019,7 +4161,135 @@ async def on_message(message: discord.Message):
                 await asyncio.sleep(DM_CHUNK_DELAY)
             await send_dm_chunked(message.channel, chunk)
     except discord.HTTPException as e:
-        _log(f'HTTPException in on_message reply send: {e}')
+        _log(f'HTTPException in {source} reply send: {e}')
+
+
+async def _backfill_dm_gap(reason: str) -> int:
+    """Replay DMs that arrived while this bot was disconnected.
+
+    Returns the number of messages processed. Best-effort throughout: this
+    runs on the ready path and must never be able to break it.
+
+    Discord does NOT re-deliver DMs missed during a disconnect, so without
+    this the live event stream is silently lossy across every reconnect —
+    which is how Clover's two messages to mayor were permanently lost on
+    2026-08-17 while every health signal said fine."""
+    global _dm_backfill_running
+    if _dm_backfill_running:
+        # Two ready/resume fires can overlap; a second concurrent walk of the
+        # same range would only produce work the dedupe throws away.
+        _log(f'BACKFILL ({reason}): already running, skipping this fire')
+        return 0
+    _dm_backfill_running = True
+    try:
+        return await _backfill_dm_gap_inner(reason)
+    except Exception as exc:  # noqa: BLE001
+        _log(f'BACKFILL ({reason}) FAILED: {exc!r} — inbound messages sent '
+             f'during the last disconnect may NOT have been recovered')
+        return 0
+    finally:
+        _dm_backfill_running = False
+
+
+async def _backfill_dm_gap_inner(reason: str) -> int:
+    user = client.get_user(USER_ID) or await client.fetch_user(USER_ID)
+    channel = user.dm_channel or await user.create_dm()
+    watermark = load_dm_watermark(channel.id)
+
+    if watermark is None:
+        # NO SILENT START-FROM-NOW. Seeding without replaying is the right
+        # call on a first run (replaying an entire DM history would re-run
+        # every command in it), but it is indistinguishable from a gap being
+        # swallowed unless it is said out loud — so say it out loud.
+        seeded = None
+        try:
+            async for msg in channel.history(limit=1):
+                seeded = msg.id
+        except discord.HTTPException as exc:
+            _log(f'BACKFILL ({reason}): NO WATERMARK for channel '
+                 f'{channel.id} and history unreadable ({exc}). Any DM sent '
+                 f'during the last disconnect is UNRECOVERABLE.')
+            return 0
+        if seeded is None:
+            _log(f'BACKFILL ({reason}): NO WATERMARK for channel '
+                 f'{channel.id} and the channel is empty — seeding on the '
+                 f'first message received.')
+            return 0
+        save_dm_watermark(channel.id, seeded)
+        _log(f'BACKFILL ({reason}): NO WATERMARK for channel {channel.id} — '
+             f'seeded at message {seeded} WITHOUT replaying history. This run '
+             f'cannot recover anything sent before now; the next reconnect '
+             f'can. If you did not expect this, the watermark file '
+             f'({DM_WATERMARK_FILE}) was missing or unreadable.')
+        return 0
+
+    processed = 0
+    scanned = 0
+    newest = watermark
+    try:
+        # oldest_first: commands and chat must replay in the order they were
+        # sent, not newest-first.
+        async for msg in channel.history(
+            after=discord.Object(id=watermark),
+            oldest_first=True,
+            limit=DM_BACKFILL_LIMIT,
+        ):
+            scanned += 1
+            newest = max(newest, msg.id)
+            if _already_processed(channel.id, msg.id):
+                continue
+            _mark_message_processed(msg.id)
+            if msg.author.bot or msg.author.id != USER_ID:
+                # Not actionable, but it still moves the watermark: leaving
+                # the mark behind our own outbound DMs would re-scan them on
+                # every single reconnect forever.
+                continue
+            _log(f'BACKFILL ({reason}): recovering missed DM {msg.id} '
+                 f'from {msg.created_at.isoformat()}')
+            try:
+                await _dispatch_dm(msg, f'backfill/{reason}')
+                processed += 1
+            except Exception as exc:  # noqa: BLE001
+                # Do not let one poison message strand the rest of the gap;
+                # name it in the log so it is recoverable by hand.
+                _log(f'BACKFILL ({reason}): message {msg.id} raised '
+                     f'{exc!r} — skipped, continuing')
+    except discord.HTTPException as exc:
+        _log(f'BACKFILL ({reason}): history fetch failed after {scanned} '
+             f'message(s): {exc}. Watermark left at {watermark}; the next '
+             f'reconnect will retry the same range.')
+        return processed
+
+    if newest > watermark:
+        save_dm_watermark(channel.id, newest)
+    if scanned >= DM_BACKFILL_LIMIT:
+        _log(f'BACKFILL ({reason}): hit the {DM_BACKFILL_LIMIT}-message cap. '
+             f'Anything older than the {DM_BACKFILL_LIMIT} most recent '
+             f'messages in this gap was NOT replayed.')
+    _log(f'BACKFILL ({reason}): channel {channel.id}, watermark {watermark} '
+         f'-> {newest}, {scanned} message(s) scanned, {processed} missed DM(s) '
+         f'recovered')
+    return processed
+
+
+@client.event
+async def on_message(message: discord.Message):
+    if message.author.bot:
+        return
+    if message.author.id != USER_ID:
+        return
+    if not isinstance(message.channel, discord.DMChannel):
+        return
+    # mg-c1d5: the live stream and the reconnect backfill can both surface
+    # the same message. Whichever gets there first wins; the other drops it.
+    if _already_processed(message.channel.id, message.id):
+        _log(f'on_message: {message.id} already handled (backfill) — skipping')
+        return
+    _mark_message_processed(message.id)
+    await _dispatch_dm(message, 'on_message')
+    # Advance AFTER handling, never before: a crash mid-dispatch must leave
+    # the message inside the next backfill's range rather than marked done.
+    save_dm_watermark(message.channel.id, message.id)
 
 
 if __name__ == '__main__':

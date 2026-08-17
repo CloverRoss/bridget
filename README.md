@@ -486,17 +486,62 @@ you'd supervise any other foreground service. A few options:
 Bundled launchd / systemd templates and an `install.sh --service=...` flag are
 on the roadmap; for now, write the unit yourself. PRs welcome.
 
-## Gateway liveness: the heartbeat and the watchdog
+## Gateway liveness: backfill, heartbeat, watchdog
 
-**A healthy process is not a healthy channel.** On 2026-08-17 the bot read
-OFFLINE in Discord for an hour while every process-level signal said fine —
+**A healthy process is not a healthy channel.** On 2026-08-17 the gateway
+websocket died across a host sleep while every process-level signal said fine —
 `launchctl print` reported `state = running`, `keepalive`, `pid = 770`,
-`last exit code = (never exited)`. The gateway websocket underneath had gone
-stale across a host sleep. It recovered only by accident, when an outbound
-message happened to be sent. A supervisor's keepalive is structurally blind to
-this: there is nothing wrong with the process.
+`last exit code = (never exited)`. A supervisor's keepalive is structurally
+blind to this: there is nothing wrong with the process.
 
-Two pieces close it, and both are required.
+**And the damage was message loss, not cosmetics.** Outbound kept working —
+DMs from the crew arrived normally. What broke was inbound: two messages sent
+*to* the bot were never delivered and are permanently gone. That is how the
+outage was noticed at all.
+
+Three pieces close it, and all three are required. The first is the one that
+prevents the loss; the other two shorten and reveal the outage.
+
+### 0. Gap backfill on reconnect — the one that stops the loss
+
+**Discord does not re-deliver DMs that arrived while the bot was
+disconnected.** A fresh IDENTIFY starts the event stream at *now*, so a bridge
+that reconnects and resumes listening has silently skipped everything sent
+during the gap. Detecting the dead gateway and restarting does not help: the
+messages are already gone.
+
+So bridget does not trust the live stream to be complete. It persists the id of
+the last message it actually processed, per channel, in
+`~/.pogo/bridget-dm-watermark.json`:
+
+```json
+{"555000111": {"last_message_id": 1404889912209969152,
+               "updated_at": "2026-08-17T07:41:12Z"}}
+```
+
+On **every** `on_ready` and `on_resumed` — before resuming live handling — it
+fetches that channel's history *after* the stored id and replays what it
+missed, oldest first, through the same handler the live stream uses. Message
+ids are snowflakes (monotonic and time-ordered), so "after this id" is exactly
+"everything since I last looked", with no clock involved on either side. Same
+shape as `land-robin-receive` resubscribing with `since=<last consumed id>`
+rather than resuming at now and eating the gap.
+
+Replay is idempotent: a message that arrives via both the backfill and the live
+stream is processed once, guarded by the watermark (across restarts) and an
+in-process id set (for the concurrent case). The watermark advances *after* a
+message is handled, never before, so a crash mid-dispatch leaves it inside the
+next backfill's range.
+
+Everything that could hide a gap is logged **loudly** rather than swallowed: a
+missing or unreadable watermark seeds without replaying and says so, a history
+fetch failure leaves the mark for the next attempt and says so, and hitting the
+`POGO_BRIDGET_BACKFILL_LIMIT` cap (default 500) names what was not replayed. A
+silent fallback to "start from now" is precisely how the gap became invisible
+in the first place.
+
+Overrides: `POGO_BRIDGET_DM_WATERMARK` (path),
+`POGO_BRIDGET_BACKFILL_LIMIT` (messages per pass).
 
 ### 1. The heartbeat (inside bridget)
 
@@ -598,8 +643,14 @@ Common failure modes:
 - **`restart` says git pull failed** — the bridget checkout has uncommitted
   changes or a divergent branch. Resolve manually in the repo; bridget keeps
   running on the old code in the meantime.
+- **A message you sent the bot never arrived** — the gateway was probably down
+  when you sent it, and Discord does not re-deliver those. bridget backfills
+  them on reconnect; grep the log for `BACKFILL` to see what it recovered and
+  from which watermark. A `NO WATERMARK` line means it could not tell where it
+  left off and seeded instead of replaying — anything sent before that point is
+  unrecoverable, and `~/.pogo/bridget-dm-watermark.json` is the file to look at.
 - **Bot shows OFFLINE but the process is running** — this is the failure
-  [the gateway watchdog](#gateway-liveness-the-heartbeat-and-the-watchdog)
+  [the gateway watchdog](#gateway-liveness-backfill-heartbeat-watchdog)
   exists for. Check `~/.pogo/bridget-gateway.heartbeat`: a `stamped_at` more
   than a few minutes old, or a `latency_s` of `null`, means the websocket is
   not carrying traffic no matter what `launchctl print` says. Heal with

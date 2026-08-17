@@ -9,6 +9,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- mg-c1d5 DM gap backfill on reconnect — the fix for the actual data
+  loss. The 2026-08-17 outage was not cosmetic and not outbound: two
+  messages sent *to* the bot were never delivered and are permanently
+  gone, while outbound DMs kept working the whole time. Discord does not
+  re-deliver DMs that arrived while the bot was disconnected — a fresh
+  IDENTIFY starts the event stream at now — so detecting the dead
+  gateway and kickstarting the bridge shortens and reveals the outage
+  but does not prevent the loss.
+
+  bridget now persists the last message id it actually processed, per
+  channel, in `~/.pogo/bridget-dm-watermark.json`, and on every
+  `on_ready` / `on_resumed` — before resuming live handling — fetches
+  that channel's history after the stored id and replays what it missed,
+  oldest first, through the same handler the live stream uses. Snowflake
+  ids mean "after this id" is exactly "everything since I last looked",
+  with no clock on either side; same shape as land-robin-receive
+  resubscribing with since=<last consumed id>. Idempotent: the watermark
+  covers restarts and an in-process id set covers a message arriving via
+  both paths at once, and the mark advances only after a message is
+  handled. Anything that could hide a gap — a missing/unreadable
+  watermark, a failed history fetch, hitting the
+  `POGO_BRIDGET_BACKFILL_LIMIT` cap — is logged loudly instead of
+  silently falling back to "start from now". Overrides:
+  `POGO_BRIDGET_DM_WATERMARK`, `POGO_BRIDGET_BACKFILL_LIMIT`.
+
 - mg-c1d5 gateway channel-liveness heartbeat + sleep-aware watchdog.
   bridget could go silently dead while the process stayed perfectly
   healthy: on 2026-08-17 the bot read OFFLINE in Discord for an hour
