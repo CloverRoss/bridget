@@ -9,6 +9,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- mg-c1d5 gateway channel-liveness heartbeat + sleep-aware watchdog.
+  bridget could go silently dead while the process stayed perfectly
+  healthy: on 2026-08-17 the bot read OFFLINE in Discord for an hour
+  while `launchctl print` reported `state = running`, `keepalive`,
+  `pid = 770`, `last exit code = (never exited)`. The gateway websocket
+  had gone stale across a host sleep, and it recovered only by accident
+  when an outbound message happened to be sent. PROCESS ALIVE IS NOT
+  CHANNEL ALIVE, and a keepalive supervisor is structurally blind to the
+  difference.
+
+  bridget now stamps `~/.pogo/bridget-gateway.heartbeat` from inside
+  `on_socket_raw_receive` — driven by frames actually arriving down the
+  websocket, never by a timer (a timer stays healthy through exactly this
+  failure). The stamp carries `latency_s`, discord.py's measured
+  HEARTBEAT → HEARTBEAT_ACK round trip; `null` means "no round trip
+  measured" and is explicitly not liveness. Requires
+  `enable_debug_events=True` on the Client, without which discord.py never
+  dispatches the socket event. Paths/cadence overridable via
+  `POGO_BRIDGET_GATEWAY_HEARTBEAT` and
+  `POGO_BRIDGET_GATEWAY_HEARTBEAT_MIN_INTERVAL`.
+
+  New `bin/bridget-gateway-watchdog.sh` (launchd job template in
+  `launchd/`, symlinked + rendered by `install.sh`) checks that stamp
+  every 5min and heals with `launchctl kickstart -k` — never `bootout`,
+  which would take the inject server, the DM channel and the claim
+  announcer down with no way back. Staleness threshold 300s ≈ 4× the
+  worst-case healthy interval. Suppresses the four false positives that
+  matter: a recent host wake, an overnight shutdown, a bridge that only
+  just restarted, and a merely quiet channel — while still clearing a
+  stuck alert state across a wake on positive proof, so the alarm cannot
+  mask itself. Alerts fire on state transition with the evidence in the
+  mail, not per run.
+
 - ia-5f66 Inject API for cross-host message injection (Robin v2.1
   pre-req). New aiohttp listener on `127.0.0.1:8765` (port configurable
   via `BRIDGET_INJECT_PORT`) exposes `POST /v1/inject` that lets

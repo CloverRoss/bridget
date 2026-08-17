@@ -486,6 +486,87 @@ you'd supervise any other foreground service. A few options:
 Bundled launchd / systemd templates and an `install.sh --service=...` flag are
 on the roadmap; for now, write the unit yourself. PRs welcome.
 
+## Gateway liveness: the heartbeat and the watchdog
+
+**A healthy process is not a healthy channel.** On 2026-08-17 the bot read
+OFFLINE in Discord for an hour while every process-level signal said fine —
+`launchctl print` reported `state = running`, `keepalive`, `pid = 770`,
+`last exit code = (never exited)`. The gateway websocket underneath had gone
+stale across a host sleep. It recovered only by accident, when an outbound
+message happened to be sent. A supervisor's keepalive is structurally blind to
+this: there is nothing wrong with the process.
+
+Two pieces close it, and both are required.
+
+### 1. The heartbeat (inside bridget)
+
+bridget writes `~/.pogo/bridget-gateway.heartbeat` — one line of JSON:
+
+```json
+{"stamped_at": "2026-08-17T07:41:12Z", "reason": "socket_receive", "pid": 770,
+ "nonce": "9f1c2a44be07", "latency_s": 0.0512, "frames": 41207}
+```
+
+The write is driven by `on_socket_raw_receive`, i.e. by a frame that actually
+arrived down the websocket — never by a timer, because the process and its
+timers stay perfectly healthy through this failure, so a timer-driven stamp
+would report a dead gateway as alive forever. Discord ACKs the gateway
+heartbeat every ~41s even on a totally idle connection, so a live socket keeps
+stamping and a dead one cannot.
+
+`latency_s` is discord.py's measured HEARTBEAT → HEARTBEAT_ACK round trip.
+**`null` means "no round trip has been measured" and is never liveness** — the
+watchdog requires a finite positive number. (This rule exists because a sister
+heartbeat once emitted a startup stamp with a null round-trip time and it was
+read as healthy while the channel was not.)
+
+Overrides: `POGO_BRIDGET_GATEWAY_HEARTBEAT` (path),
+`POGO_BRIDGET_GATEWAY_HEARTBEAT_MIN_INTERVAL` (seconds between writes,
+default 30).
+
+### 2. The watchdog (outside bridget)
+
+`bin/bridget-gateway-watchdog.sh` checks that stamp's freshness every 5 minutes
+and, on proof the socket went cold, heals with:
+
+```
+launchctl kickstart -k gui/<uid>/com.pogo.discord-bridge
+```
+
+**Never `launchctl bootout`** — the same service is the inject server, the DM
+channel and the claim announcer, and a booted-out one does not come back on its
+own.
+
+It refuses to fire on any of the four things that merely *look* like a dead
+gateway:
+
+| Situation | Why it is not a fault | What the watchdog does |
+|---|---|---|
+| Host just woke | Nothing was running to stamp; discord.py's own reconnect is in flight | Skip — but still *clear* a stuck alert if the stamp is fresh with a finite latency |
+| Host was off overnight | The stamp ages on the wall clock, not on bridget's | Skip, if `kern.boottime` accounts for the whole gap |
+| The bridge just restarted | No time yet to open a gateway and measure a round trip | Skip |
+| Nobody messaged the bot all day | Quiet is not dead — the ACKs keep stamping | Report ok |
+
+Alerts fire on state *transition*, not per run (one hourly reminder while a
+condition persists, one CLEAR notice when it resolves), and every alert to mayor
+carries the evidence — the stamp's age, its latency, host uptime, service uptime
+— not just "I restarted it".
+
+Install it with `./install.sh` (symlinks the script and renders a launchd job to
+`~/.pogo/launchd/`), then copy that plist to `~/Library/LaunchAgents/` and
+`launchctl bootstrap gui/$(id -u) …`. To see its decision without touching the
+service:
+
+```
+~/.pogo/bin/bridget-gateway-watchdog.sh --dry-run
+tail ~/.pogo/log/bridget-gateway-watchdog.log
+```
+
+> **Deploying a bridget change does not take effect until the bridge restarts.**
+> A `git pull` moves the file; the running process is still the old code. Pull,
+> then `launchctl kickstart -k gui/$(id -u)/com.pogo.discord-bridge`, then
+> **verify the pid actually changed**.
+
 ## Troubleshooting
 
 When bridget is running under a supervisor, stderr is the first place to look.
@@ -517,6 +598,14 @@ Common failure modes:
 - **`restart` says git pull failed** — the bridget checkout has uncommitted
   changes or a divergent branch. Resolve manually in the repo; bridget keeps
   running on the old code in the meantime.
+- **Bot shows OFFLINE but the process is running** — this is the failure
+  [the gateway watchdog](#gateway-liveness-the-heartbeat-and-the-watchdog)
+  exists for. Check `~/.pogo/bridget-gateway.heartbeat`: a `stamped_at` more
+  than a few minutes old, or a `latency_s` of `null`, means the websocket is
+  not carrying traffic no matter what `launchctl print` says. Heal with
+  `launchctl kickstart -k gui/$(id -u)/com.pogo.discord-bridge` (never
+  `bootout`). If the file does not exist at all, the running build predates
+  the heartbeat — pull and kickstart, and check the pid changed.
 
 ## Operating conventions
 

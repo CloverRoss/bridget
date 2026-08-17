@@ -65,6 +65,41 @@ else
     ln -s "$SCRIPT" "$BIN_LINK"
 fi
 
+# 2b. symlink the gateway watchdog + render its launchd job (mg-c1d5)
+#
+# The watchdog is the half of the fix that lives OUTSIDE the process: bridget
+# stamps proof its gateway socket is carrying traffic, and this checks that
+# stamp's freshness on a timer and kickstarts the bridge when it goes cold.
+# Both halves are required — a heartbeat nobody reads heals nothing, and a
+# watchdog with no heartbeat is back to the process-level check that was
+# structurally blind to this failure in the first place.
+WATCHDOG_SRC="$REPO_DIR/bin/bridget-gateway-watchdog.sh"
+WATCHDOG_LINK="$BIN_DIR/bridget-gateway-watchdog.sh"
+if [[ -f "$WATCHDOG_SRC" ]]; then
+    if [[ -L "$WATCHDOG_LINK" && "$(readlink "$WATCHDOG_LINK")" == "$WATCHDOG_SRC" ]]; then
+        log "symlink $WATCHDOG_LINK already points to $WATCHDOG_SRC"
+    elif [[ -e "$WATCHDOG_LINK" && ! -L "$WATCHDOG_LINK" ]]; then
+        warn "$WATCHDOG_LINK exists and is not a symlink — leaving it alone."
+    else
+        log "linking $WATCHDOG_LINK → $WATCHDOG_SRC"
+        rm -f "$WATCHDOG_LINK"
+        ln -s "$WATCHDOG_SRC" "$WATCHDOG_LINK"
+    fi
+else
+    warn "no watchdog at $WATCHDOG_SRC — gateway death will go undetected"
+fi
+
+PLIST_TEMPLATE="$REPO_DIR/launchd/com.pogo.bridget-gateway-watchdog.plist.template"
+PLIST_OUT="$HOME/.pogo/launchd/com.pogo.bridget-gateway-watchdog.plist"
+if [[ -f "$PLIST_TEMPLATE" ]]; then
+    mkdir -p "$(dirname "$PLIST_OUT")"
+    sed "s|__HOME__|$HOME|g; s|__UID__|$(id -u)|g" "$PLIST_TEMPLATE" > "$PLIST_OUT"
+    log "rendered launchd job → $PLIST_OUT"
+    # Deliberately NOT bootstrapped here: loading a launchd job is a change to
+    # the running host, and install.sh is also run in sandboxes and CI.
+    WATCHDOG_PLIST_HINT="$PLIST_OUT"
+fi
+
 # 3. seed env file (never overwrite a populated one)
 if [[ ! -e "$ENV_FILE" ]]; then
     log "seeding $ENV_FILE from bridget.env.example"
@@ -99,5 +134,11 @@ Next steps:
      The script reads its config from $ENV_FILE on startup.
   4. To run bridget under a process supervisor (launchd / systemd / nohup),
      see the "Running as a service" section in README.md.
+  5. Install the gateway watchdog (macOS/launchd) — it is what notices when
+     the Discord websocket dies while the process stays healthy:
+         cp ${WATCHDOG_PLIST_HINT:-<rendered plist>} ~/Library/LaunchAgents/
+         launchctl bootstrap gui/\$(id -u) ~/Library/LaunchAgents/com.pogo.bridget-gateway-watchdog.plist
+     Check the decision without touching the service:
+         $BIN_DIR/bridget-gateway-watchdog.sh --dry-run
 
 EOF

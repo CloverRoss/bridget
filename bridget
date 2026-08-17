@@ -28,6 +28,7 @@ import datetime
 import hashlib
 import hmac
 import json
+import math
 import os
 import re
 import shutil
@@ -112,6 +113,53 @@ CHAT_ATTACHMENTS_DIR = HOME / '.pogo' / 'bridget-attachments'
 # on gateway reconnect (e.g., after laptop sleep). The watchers themselves
 # survive reconnects; only the spawn step needs guarding (mg-f7c5).
 _watchers_started = False
+
+# --- gateway channel-liveness heartbeat (mg-c1d5) ---------------------------
+#
+# THE FAILURE THIS EXISTS FOR. On 2026-08-17 Clover could not reach mayor
+# because the bot read OFFLINE in Discord. Nothing was broken at the process
+# level: `launchctl print gui/501/com.pogo.discord-bridge` reported state =
+# running, keepalive, pid = 770, "last exit code = (never exited)". The
+# gateway websocket underneath had gone stale across a host sleep and nothing
+# noticed, because PROCESS ALIVE IS NOT CHANNEL ALIVE and launchd's KeepAlive
+# is structurally blind to the difference. It recovered only by accident, when
+# mayor happened to send an outbound message ~an hour later. Same failure
+# class as land-robin-receive's silent death (mg-206e).
+#
+# WHAT MAKES THIS STAMP EVIDENCE RATHER THAN NOISE. A stamp fired from a
+# plain timer inside this process would be worthless: during exactly this
+# failure the process, its event loop and its timers are all perfectly alive.
+# So the write is driven by `on_socket_raw_receive` — i.e. only by a frame
+# that actually arrived down the gateway websocket. Discord sends a
+# HEARTBEAT_ACK every ~41s even on a totally idle connection, so a live socket
+# freshens this file continuously and a dead one cannot freshen it at all.
+#
+# The stamp also carries `latency_s`, discord.py's measured
+# HEARTBEAT -> HEARTBEAT_ACK round trip. That is a second, independent piece
+# of round-trip evidence, and the watchdog REQUIRES it to be a finite positive
+# number before it will read the file as liveness. Reading a null as healthy
+# is precisely how the robin heartbeat produced a false positive (a startup
+# stamp with rtt_s: null read as healthy when it was not), so `latency_s: null`
+# here means "no round trip has been measured", never "fine".
+GATEWAY_HEARTBEAT_FILE = Path(os.environ.get(
+    'POGO_BRIDGET_GATEWAY_HEARTBEAT',
+    str(HOME / '.pogo' / 'bridget-gateway.heartbeat'),
+))
+# Rate-limit on the WRITE, not on the evidence: frames arrive several times a
+# minute on a busy connection and we do not need a disk write for each. 30s is
+# comfortably under Discord's ~41s heartbeat interval, so on an idle
+# connection every ACK still produces a stamp and the file's age tracks the
+# socket rather than this interval.
+GATEWAY_HEARTBEAT_MIN_INTERVAL = float(os.environ.get(
+    'POGO_BRIDGET_GATEWAY_HEARTBEAT_MIN_INTERVAL', '30'))
+# None, not 0.0: time.monotonic()'s origin is not portable (it reads a few
+# hundred ms on this box), so a 0.0 sentinel silently suppresses the FIRST
+# stamp for the whole rate-limit window on any platform where it starts near
+# zero — i.e. exactly during startup, when we most want proof of a connect.
+_gateway_hb_last_write = None  # type: Optional[float]
+_gateway_hb_frames = 0
+_gateway_hb_latency_seen = False
+_gateway_hb_skipped_no_latency = 0
 
 # Chat inbox (mg-c05a — Robin port item 6). File-drop transport from
 # `bridget chat <agent> <body>` CLI to a DM. Mirrors Robin's chat channel
@@ -1344,7 +1392,12 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.dm_messages = True
 
-client = discord.Client(intents=intents)
+# enable_debug_events=True is what makes `on_socket_raw_receive` dispatch at
+# all — without it discord.py's DiscordWebSocket.log_receive is a no-op stub
+# and the gateway-liveness heartbeat below would never fire (mg-c1d5). The
+# cost is one extra event dispatch per inbound gateway frame; the benefit is
+# the only signal in this process that can tell a live socket from a dead one.
+client = discord.Client(intents=intents, enable_debug_events=True)
 # Native Discord slash-command tree (mg-db57 — Robin port). Wrappers below
 # forward each invocation into handle_command so the text-parser path
 # (mg-a0f3) stays the single source of truth for verb logic; tree.sync()
@@ -1372,6 +1425,79 @@ async def _assert_presence(reason: str) -> None:
         _log(f'presence re-asserted ({reason})')
     except Exception as exc:  # noqa: BLE001
         _log(f'presence re-assert failed ({reason}): {exc}')
+
+
+def _gateway_latency() -> Optional[float]:
+    """The measured HEARTBEAT -> HEARTBEAT_ACK round trip, or None.
+
+    discord.py returns nan when there is no websocket at all and inf when
+    there is one but no ACK has come back yet. BOTH mean "no round trip has
+    been measured", and both must surface as None rather than as a number —
+    the watchdog treats a null latency as no-proof-of-liveness, which is the
+    whole point (a null that reads as healthy is the exact false positive
+    that burned the robin heartbeat)."""
+    try:
+        latency = float(client.latency)
+    except (AttributeError, TypeError, ValueError):
+        return None
+    if not math.isfinite(latency) or latency <= 0:
+        return None
+    return round(latency, 4)
+
+
+def _gateway_hb_have_latency() -> bool:
+    """True once a stamp carrying a finite latency has been written."""
+    return _gateway_hb_latency_seen
+
+
+def _stamp_gateway_heartbeat(reason: str, force: bool = False) -> bool:
+    """Stamp GATEWAY_HEARTBEAT_FILE. Returns True iff the file was written.
+
+    Callers must only invoke this from evidence that the SOCKET carried
+    traffic (see on_socket_raw_receive below). Never call it from a bare
+    timer: the process stays healthy through the failure this detects, so a
+    timer-driven stamp would report a dead gateway as alive forever."""
+    global _gateway_hb_last_write, _gateway_hb_skipped_no_latency
+    global _gateway_hb_latency_seen
+    now = time.monotonic()
+    if (not force and _gateway_hb_last_write is not None
+            and (now - _gateway_hb_last_write) < GATEWAY_HEARTBEAT_MIN_INTERVAL):
+        return False
+    latency = _gateway_latency()
+    # A null-latency stamp must never CLOBBER a stamp that carried a real
+    # round trip. Once this process has measured one, losing the measurement
+    # again means the gateway just went away — and the correct signal for that
+    # is the file AGEING OUT, not a fresh stamp the watchdog has to argue with.
+    # Before the first measurement (the ~41s between connect and the first
+    # HEARTBEAT_ACK) a null stamp is still worth writing: it records the pid
+    # and the connect, and the watchdog already refuses to read it as liveness.
+    if latency is None and _gateway_hb_have_latency():
+        _gateway_hb_skipped_no_latency += 1
+        return False
+    payload = {
+        'stamped_at': datetime.datetime.now(datetime.timezone.utc)
+        .isoformat(timespec='seconds').replace('+00:00', 'Z'),
+        'reason': reason,
+        'pid': os.getpid(),
+        'nonce': uuid.uuid4().hex[:12],
+        'latency_s': latency,
+        'frames': _gateway_hb_frames,
+    }
+    try:
+        GATEWAY_HEARTBEAT_FILE.parent.mkdir(parents=True, exist_ok=True)
+        tmp = GATEWAY_HEARTBEAT_FILE.parent / (GATEWAY_HEARTBEAT_FILE.name + '.tmp')
+        # Write-then-rename: the watchdog polls this file on a timer and must
+        # never read a half-written line (same discipline as the route/task
+        # sidecars and land-robin-receive's heartbeat).
+        tmp.write_text(json.dumps(payload) + '\n')
+        os.replace(tmp, GATEWAY_HEARTBEAT_FILE)
+    except OSError as exc:
+        _log(f'gateway heartbeat stamp failed ({reason}): {exc}')
+        return False
+    _gateway_hb_last_write = now
+    if latency is not None:
+        _gateway_hb_latency_seen = True
+    return True
 
 
 def parse_mail(content: str) -> dict:
@@ -3836,6 +3962,23 @@ async def on_resumed():
     # leave Discord showing stale offline presence while DMs still flow
     # both ways. Re-assert online on every resume (mg-beb5).
     await _assert_presence('on_resumed')
+
+
+@client.event
+async def on_socket_raw_receive(msg: str) -> None:
+    """Every frame that arrives down the gateway websocket lands here.
+
+    This is the ONLY thing that freshens the gateway heartbeat, and that is
+    deliberate (mg-c1d5): a frame arriving is evidence the socket is carrying
+    traffic, which is the exact fact `launchctl print` cannot tell you. Needs
+    enable_debug_events=True on the Client — see where it is constructed.
+
+    Discord ACKs our heartbeat every ~41s even when nothing else is
+    happening, so an idle-but-live connection keeps stamping and a wedged one
+    stops within a heartbeat interval."""
+    global _gateway_hb_frames
+    _gateway_hb_frames += 1
+    _stamp_gateway_heartbeat('socket_receive')
 
 
 @client.event

@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.pogo.bridget-gateway-watchdog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>__HOME__/.pogo/bin/bridget-gateway-watchdog.sh</string>
+    </array>
+    <!-- Every 5 minutes. This is a CHECK, not a restart: it reads one small file
+         and exits, so a tight interval is nearly free. It only ever kickstarts
+         when the gateway heartbeat has been cold for >5min AND the host was
+         demonstrably awake AND the bridge was not just restarted — i.e. on proof
+         the websocket stopped carrying traffic while the process stayed healthy
+         (mg-c1d5). It is NOT a periodic restart.
+
+         RunAtLoad catches up after a reboot; the watchdog's own boot cross-check
+         keeps that first run from mistaking overnight downtime for a fault. A
+         missed StartInterval fires once on wake, and the watchdog defers for
+         20min after a system_wake so it never fights discord.py's own reconnect.
+
+         It heals with `launchctl kickstart -k` and NEVER `bootout`: this service
+         is also the inject server, Clover's DM channel and the claim announcer,
+         and a booted-out one does not come back on its own. -->
+    <key>StartInterval</key>
+    <integer>300</integer>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>__HOME__/.pogo/log/bridget-gateway-watchdog.launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/.pogo/log/bridget-gateway-watchdog.err.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>HOME</key>
+        <string>__HOME__</string>
+        <!-- $HOME/go/bin FIRST: `mg` is macguffin there, but macOS ships an
+             unrelated /usr/bin/mg (MicroEMACS). With a bare launchd PATH every
+             alert this watchdog sends would silently run the editor headless and
+             die. The script exports the same PATH itself; this is belt-and-braces. -->
+        <key>PATH</key>
+        <string>__HOME__/go/bin:__HOME__/.pogo/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+    </dict>
+</dict>
+</plist>
