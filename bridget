@@ -1429,7 +1429,16 @@ MAIL_DIR = CONFIG['mail_dir']
 INBOX_REPO = CONFIG['inbox_repo']
 
 
-import discord  # noqa: E402  (deferred so config errors don't require the venv)
+VENV_PYTHON = HOME / '.pogo' / 'venv-bridget' / 'bin' / 'python'
+try:
+    import discord  # noqa: E402  (deferred so config errors don't require the venv)
+except ImportError:
+    # Shell invocations resolve `python3` via /usr/bin/env, which may not carry
+    # requirements.txt. Hand off to the install.sh venv once; the sys.executable
+    # check stops a loop if the venv itself is missing discord.
+    if VENV_PYTHON.exists() and sys.executable != str(VENV_PYTHON):
+        os.execv(str(VENV_PYTHON), [str(VENV_PYTHON), *sys.argv])
+    raise
 
 intents = discord.Intents.default()
 intents.message_content = True
